@@ -56,6 +56,14 @@ export function zoomAt(camera: Camera, screenPoint: Vec, factor: number): Camera
   }
 }
 
+/**
+ * How much of the viewport a fitted box fills on its tight axis. Filling it
+ * edge to edge is technically the "right" fit and reads as the build shoved in
+ * your face the moment a project opens, so the frame keeps a margin of its own
+ * that scales with the window, unlike the fixed pixel `margin`.
+ */
+const FIT_FILL = 0.85
+
 /** Fit a world-space box in the viewport with a margin. */
 export function fitBox(
   box: { minX: number; minY: number; maxX: number; maxY: number },
@@ -67,7 +75,10 @@ export function fitBox(
   const bh = Math.max(1, box.maxY - box.minY)
   const zoom = Math.max(
     0.1,
-    Math.min(8, Math.min((w - margin * 2) / (bw * PITCH_PX), (h - margin * 2) / (bh * PITCH_PX))),
+    Math.min(
+      8,
+      Math.min((w - margin * 2) / (bw * PITCH_PX), (h - margin * 2) / (bh * PITCH_PX)) * FIT_FILL,
+    ),
   )
   const s = zoom * PITCH_PX
   return {

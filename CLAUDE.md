@@ -94,9 +94,10 @@ if you need to go deeper on one specific point.
   side a placed part is mounted on, which used to be fixed at drop time.
 - **Design-rule checking has been removed.** No `drc.ts`, no Issues panel.
   This is a drawing tool, and the user asked for the whole feature gone.
-- Save/open `.perfproj` (zip) and IndexedDB session restore work; Save
-  overwrites the current file, Save as… writes a new one. Session restore
-  carries the **texture bytes** too, in their own IndexedDB object store.
+- Save/open `.perfproj` (zip) work; Save overwrites the current file, Save
+  as… writes a new one. **No autosave, no IndexedDB session restore** — the
+  app always opens `public/tiny-cam.perfproj` fresh on launch (see Locked
+  decisions); a user protects in-progress work by saving and reopening a file.
 - Part editor modal works: pen tool on the half-hole grid, pin placement and
   naming, image upload with SVG sanitising, clip-to-outline texturing.
 
@@ -131,6 +132,7 @@ These were answered directly by the user. Do not reopen them without being asked
 | Double-click detection | Recognised **by hand** in `Canvas.tsx` (`doubleClicked`), not with `onDoubleClick` | `setPointerCapture` retargets the browser's compatibility mouse events, so the native dblclick lands on the `<svg>` instead of the bend you aimed at. See Gotchas |
 | Hiding a component | The Components panel's eye toggle sets `hidden` on the **PartInstance** (so it saves with the project and undoes like any edit), and hides the wiring attached to that part as well. It is view-only: `computeNets` never reads it, and a hidden part still occupies its holes | You hide a component to see what is underneath it, not to remove it. Letting it drop out of the netlist would make "hidden" silently mean "deleted", and a drop onto its holes would then succeed and produce a physically impossible board |
 | Seed parts | **Passives & basics**: resistor, capacitor (radial + ceramic), LED, diode, tactile switch, slide switch, 2-pin screw terminal, pin header (configurable length) | The user declined the ESP32/TP4056 module set and the parametric DIP/SIP set |
+| Session persistence | **No autosave, no IndexedDB session restore.** Every launch fetches `public/tiny-cam.perfproj` fresh, unconditionally. A user who wants to keep in-progress work saves a `.perfproj` and reopens it later | Autosave-then-restore meant the live GitHub Pages demo silently pinned every returning visitor to whatever `tiny-cam.perfproj` looked like on their first visit, even after the file was updated and redeployed — a stale demo forever, per browser. The user explicitly chose "always show the current file; Save/Open is how you protect work" over continuity-across-reloads |
 
 ---
 
@@ -239,8 +241,10 @@ We store integer hole coordinates and derive pixels at render time. That's it.
 - **`showSaveFilePicker` will never exist in Safari or Firefox.** Mozilla's
   standards position on the local-disk pickers is "harmful"; Apple shipped OPFS
   instead. Global support ~31%, Chromium-desktop only. So save-in-place is a
-  progressive enhancement and the universal path is a blob download.
-  Session restore therefore comes from **IndexedDB autosave, not from the file**.
+  progressive enhancement and the universal path is a blob download. (We do
+  **not** use IndexedDB session restore to paper over this — see Locked
+  decisions, Session persistence — but it remains the reason Save/Save as…
+  route through `browser-fs-access` instead of assuming a real file handle.)
 - Use a **private MIME type** (`application/x-perfproj`) in `showSaveFilePicker`
   `types`, or Chrome offers every extension registered for the standard type and
   the user ends up with `project.perfproj.zip`. Also pass `suggestedName` and
@@ -333,7 +337,7 @@ src/
   parts/
     builtin.ts     ✅ the seed part definitions
   ui/
-    App.tsx        ✅ layout, save/open/new, session restore
+    App.tsx        ✅ layout, save/open/new, always loads the demo project fresh
     Canvas.tsx     ✅ SVG canvas, camera, tools, drag, wire drawing
     view.ts        ✅ screen<->board transform, mirror, zoom-to-cursor, fit
     Board.tsx      ✅ board surface + one-node hole pattern
@@ -348,7 +352,6 @@ src/
   io/
     assets.ts      ✅ content-addressed in-memory asset store
     perfproj.ts    ✅ zip read/write
-    autosave.ts    ✅ IndexedDB session restore
     sanitize.ts    ✅ SVG upload sanitisation (DOMPurify + href/on* stripping)
 ```
 
@@ -503,13 +506,10 @@ Legend: `[x]` done · `[ ]` not started · `[~]` partial
       in `App.tsx`; passing `null` instead of `fileHandle.current` always shows
       the picker, and the returned handle becomes the target of later plain saves
 - [x] Open via `fileOpen`
-- [x] `autosave.ts` — debounced (1.2s idle) + on `visibilitychange`, into
-      IndexedDB via `idb`; calls `navigator.storage.persist()` on first save
-- [x] Autosave persists **asset bytes**, not just the project — an `assets`
-      object store keyed by the same content hash, rehydrated into the
-      in-memory store before the restored project reaches the app
-- [x] Restore last session on load, with a 1.5s timeout so blocked storage
-      cannot stall first paint
+- [x] **Autosave and IndexedDB session restore removed** (see Locked
+      decisions, Session persistence) — `io/autosave.ts` deleted, `idb`
+      dropped from dependencies. `App.tsx` always fetches
+      `public/tiny-cam.perfproj` fresh on launch instead
 - [ ] Drag-a-file-onto-the-window to open
 - [ ] Chromium only: stash `FileSystemFileHandle` in IndexedDB, offer a
       "Reopen «name».perfproj" button (permission needs a user gesture)
@@ -561,7 +561,7 @@ npm run preview   # serve the built dist/
 npm run lint      # oxlint (this scaffold uses oxlint, not ESLint)
 ```
 
-Dependencies already installed: `fflate`, `idb`, `browser-fs-access`, `dompurify`.
+Dependencies already installed: `fflate`, `browser-fs-access`, `dompurify`.
 DOMPurify 3 ships its own types — do not add `@types/dompurify`.
 
 ---
@@ -581,10 +581,13 @@ DOMPurify 3 ships its own types — do not add `@types/dompurify`.
   UNMIRRORED screen space, so from the bottom side the box must be reflected
   about the mirror axis first. It reads the project and side live rather than
   taking them as deps — re-fitting on a content change would yank the camera
-  mid-edit.
+  mid-edit. `fitBox` also holds back a `FIT_FILL` fraction (0.85) of the tight
+  axis on top of its fixed pixel `margin`: a true edge-to-edge fit opens with
+  the build in your face, and a proportional margin is the part that still
+  reads right on a 30-inch monitor.
 - **`loadSeq` in the store is what "a new document was opened" means.**
-  `load()` bumps it (session restore, file open, New); `commit()` never does.
-  Anything that should reset per-document view state keys off it.
+  `load()` bumps it (default-project load, file open, New); `commit()` never
+  does. Anything that should reset per-document view state keys off it.
 - **The dot grid follows the camera, not the document.** `gridBox` in
   `Canvas.tsx` is the viewport corners run through `screenToWorld`, padded two
   holes. Sizing it from the artwork (the old `worldBox ± 30`) left bare canvas
@@ -609,24 +612,22 @@ DOMPurify 3 ships its own types — do not add `@types/dompurify`.
   `builtin.ts` derives an id by stripping non-word characters, so names like
   `+` and `-` both collapse to `""`. It now falls back to an index and
   de-duplicates — do not undo that. Wire anchors reference pin ids.
-- **Autosaving the project alone loses every texture.** `project.assets`
-  records only each asset's mime and name; the bytes live in a module-scoped
-  `Map` in `io/assets.ts` that a reload wipes. `io/autosave.ts` therefore
-  keeps a second IndexedDB object store, `assets`, keyed by the same content
-  hash, and `loadSession` calls `setAsset` for everything the restored
-  project references **before** returning — `App.tsx` memoises `assetUrls` on
-  `s.project.assets`, so bytes arriving after `load()` would never produce a
-  URL. `assetUrl` returns `''` for a missing id rather than throwing, which is
-  why this failed silently: parts just rendered as bare fills. The DB is at
-  version 2 for this store; anything else that adds a store must bump it
-  again. Note that a session autosaved before this fix has no bytes anywhere
-  — those textures are only recoverable from a `.perfproj` file.
-- **A stale autosave can carry old bugs forward.** When a model-level fix
-  lands, remember the IndexedDB session still holds the pre-fix document.
-  `indexedDB.deleteDatabase('perf-wiring')` in the console clears it.
-- **First paint must never await storage.** `openDB` can hang rather than
-  reject when site data is blocked; `App.tsx` races the session load against a
-  1.5s timeout for this reason.
+- **There is no autosave and no IndexedDB session restore — removed
+  deliberately, do not reintroduce it.** The app used to restore the last
+  IndexedDB-saved session on launch and only fell back to
+  `public/tiny-cam.perfproj` on a browser's first-ever visit. That meant the
+  live GitHub Pages demo pinned every returning visitor to a stale snapshot
+  from their first visit forever, even after `tiny-cam.perfproj` was updated
+  and redeployed — the concrete bug that got this removed. `App.tsx` now
+  always fetches `public/tiny-cam.perfproj` fresh on every launch (see Locked
+  decisions, Session persistence); a user protects in-progress work with
+  Save/Save as… and reopens the file later, same as any desktop app with no
+  autosave. `io/autosave.ts` and the `idb` dependency are gone — if a texture
+  ever needs to survive a reload again, remember that `deserializeProject`
+  (`io/perfproj.ts`) already writes every asset's bytes into `io/assets.ts`'s
+  in-memory store as a normal side effect of loading a `.perfproj`, which is
+  what makes both the default-project fetch and File → Open "just work" for
+  textures with no separate persistence layer.
 - **An SVG hit target must hit-test on its FILL.** A `stroke="transparent"`
   ring with `vector-effect="non-scaling-stroke"` renders but Chrome will not
   hit-test it, so a handle built that way silently does nothing and whatever is

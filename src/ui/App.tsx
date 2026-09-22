@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { fileOpen, fileSave, supported as fsSupported } from 'browser-fs-access'
 import { assetUrlMap } from '../io/assets'
-import { loadSession, saveSession } from '../io/autosave'
 import { deserializeProject, PERFPROJ_MIME, projectBlob, suggestedFilename } from '../io/perfproj'
 import type { Project } from '../model/types'
 import { computeNets } from '../model/nets'
@@ -20,7 +19,7 @@ import { Toolbar } from './Toolbar'
 /**
  * Bring an older document up to date: a single `board` before multi-board
  * support, and a single-polygon `outline` before multi-shape part bodies.
- * Every load path — file open AND session restore — must go through this.
+ * Every load path — the default project AND file open — must go through this.
  */
 function migrate(p: Project): Project {
   const legacy = p as Project & { board?: { cols: number; rows: number } }
@@ -30,7 +29,12 @@ function migrate(p: Project): Project {
   return normalizeProject({ ...p, boards })
 }
 
-/** First-ever launch (no autosaved session yet) opens this instead of a blank project. */
+/**
+ * The demo project, loaded fresh on every launch. There is no autosaved
+ * session to fall back to on purpose: a visitor who wants to keep work
+ * across reloads saves a `.perfproj` and reopens it, rather than the app
+ * silently pinning them to whatever this file looked like on their first visit.
+ */
 async function loadDefaultProject(): Promise<Project | undefined> {
   try {
     const res = await fetch(`${import.meta.env.BASE_URL}tiny-cam.perfproj`)
@@ -49,45 +53,18 @@ export default function App() {
   const [editing, setEditing] = useState<{ defId?: string } | null>(null)
   const fileHandle = useRef<FileSystemFileHandle | null>(null)
 
-  // Restore the last session, or start a fresh project seeded with built-ins.
+  // Always open the demo project fresh — see loadDefaultProject.
   useEffect(() => {
     let cancelled = false
     void (async () => {
-      // Storage must never block first paint: openDB can hang rather than
-      // reject when site data is blocked (private windows, strict settings).
-      const session = await Promise.race([
-        loadSession(),
-        new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 1500)),
-      ])
+      const seeded = await loadDefaultProject()
       if (cancelled) return
-      if (session?.project) {
-        load(migrate(session.project), false)
-        setStatus(`Restored from ${new Date(session.savedAt).toLocaleString()}`)
-      } else {
-        const seeded = await loadDefaultProject()
-        if (cancelled) return
-        load(seeded ?? createProject('Untitled', builtinMap()), false)
-      }
+      load(seeded ?? createProject('Untitled', builtinMap()), false)
       setReady(true)
     })()
     return () => {
       cancelled = true
     }
-  }, [])
-
-  // Debounced autosave, plus a flush when the tab is hidden.
-  useEffect(() => {
-    if (!ready) return
-    const t = setTimeout(() => void saveSession(s.project), 1200)
-    return () => clearTimeout(t)
-  }, [s.project, ready])
-
-  useEffect(() => {
-    const onHide = () => {
-      if (document.visibilityState === 'hidden') void saveSession(getState().project)
-    }
-    document.addEventListener('visibilitychange', onHide)
-    return () => document.removeEventListener('visibilitychange', onHide)
   }, [])
 
   const netlist = useMemo(() => computeNets(s.project), [s.project])
