@@ -1,4 +1,4 @@
-import { partPinPositions } from './geometry'
+import { anchorPos, distToSegment, partPinPositions } from './geometry'
 import { boardPads } from './pads'
 import { isHole } from './project'
 import type { Anchor, Project, Vec } from './types'
@@ -71,7 +71,7 @@ export interface Net {
   wireIds: string[]
   pinNodes: NodeId[]
   holeNodes: NodeId[]
-  /** Distinct parts this net reaches. Fritzing paints green only at >= 2. */
+  /** Distinct parts this net reaches. See netIsConnected for the "connected" rule. */
   partIds: string[]
 }
 
@@ -119,6 +119,39 @@ export function computeNets(project: Project): Netlist {
     const b = anchorNode(w.to, w.id, 'b')
     wireNodes.set(w.id, [a, b])
     uf.union(a, b)
+  }
+
+  // A wire that ends on a bare hole is a real physical join wherever it
+  // touches another wire's run, not only when both wires declare the exact
+  // same hole as their own endpoint — a bend, or any point along a straight
+  // run, is just as electrically real. This checks each wire's own HOLE
+  // endpoints (a deliberate landing spot) against every other wire's path;
+  // it does not check part pins, because a wire merely passing over an
+  // unrelated pin's hole (insulated, routed across the board) is not a
+  // connection — only where a wire was actually terminated is.
+  const holeEndpoints: { pos: Vec; wireId: string }[] = []
+  for (const w of project.wires) {
+    if (w.from.kind === 'hole') holeEndpoints.push({ pos: { x: w.from.x, y: w.from.y }, wireId: w.id })
+    if (w.to.kind === 'hole') holeEndpoints.push({ pos: { x: w.to.x, y: w.to.y }, wireId: w.id })
+  }
+  const pinLookup = (partId: string, pinId: string) => pinPos.get(`${partId}:${pinId}`)
+  const TAP_EPS = 1e-6
+  for (const w of project.wires) {
+    const from = anchorPos(w.from, pinLookup)
+    const to = anchorPos(w.to, pinLookup)
+    if (!from || !to) continue
+    const path = [from, ...w.waypoints, to]
+    const wireNode = wireNodes.get(w.id)?.[0]
+    if (!wireNode) continue
+    for (const ep of holeEndpoints) {
+      if (ep.wireId === w.id) continue
+      for (let i = 0; i < path.length - 1; i++) {
+        if (distToSegment(ep.pos, path[i], path[i + 1]) < TAP_EPS) {
+          uf.union(holeNode(ep.pos.x, ep.pos.y), wireNode)
+          break
+        }
+      }
+    }
   }
 
   // An edge pad is one piece of copper over two holes, so its cells are
@@ -184,7 +217,13 @@ export function netOfNode(list: Netlist, node: NodeId): Net | undefined {
   return list.nets.find((n) => n.id === id)
 }
 
-/** Fritzing's rule: a connector is "connected" when its net reaches >= 2 parts. */
+/**
+ * A connector is "connected" when its net reaches >= 2 parts (Fritzing's
+ * rule), OR when >= 2 wires meet in it. The latter covers a wire spliced
+ * onto another wire at a shared hole with no part there — a real physical
+ * join, not a dangling stub, even before the run reaches a second component.
+ */
 export function netIsConnected(net: Net | undefined): boolean {
-  return !!net && net.partIds.length >= 2
+  if (!net) return false
+  return net.partIds.length >= 2 || net.wireIds.length >= 2
 }

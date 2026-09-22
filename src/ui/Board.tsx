@@ -167,9 +167,6 @@ export function CanvasDefs() {
       <filter id="pf-part-shadow" x="-30%" y="-30%" width="180%" height="180%">
         <feDropShadow dx="0" dy="0.08" stdDeviation="0.09" floodColor="#000" floodOpacity="0.42" />
       </filter>
-      <filter id="pf-wire-shadow" x="-40%" y="-40%" width="200%" height="200%">
-        <feDropShadow dx="0" dy="0.07" stdDeviation="0.07" floodColor="#000" floodOpacity="0.4" />
-      </filter>
     </defs>
   )
 }

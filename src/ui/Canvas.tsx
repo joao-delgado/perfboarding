@@ -332,7 +332,27 @@ export function Canvas({ assetUrls }: { assetUrls: Record<string, string> }) {
         setPending(null)
         set({ selection: EMPTY_SELECTION, hoverNet: null })
       }
-      if (e.key === 'Enter' && pending && pending.waypoints.length > 0) finishWire()
+      if (e.key === 'Enter' && pending && pending.waypoints.length > 0)
+        finishWire(pending.waypoints[pending.waypoints.length - 1])
+      if (!e.metaKey && !e.ctrlKey && !e.altKey) {
+        const k = e.key.toLowerCase()
+        if (k === 'v') {
+          set({ tool: 'select' })
+          return
+        }
+        if (k === 'w') {
+          set({ tool: 'wire' })
+          return
+        }
+        if (k === 'q') {
+          set({ side: 'top' })
+          return
+        }
+        if (k === 'e') {
+          set({ side: 'bottom' })
+          return
+        }
+      }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a') {
         e.preventDefault()
         set({
@@ -437,7 +457,11 @@ export function Canvas({ assetUrls }: { assetUrls: Record<string, string> }) {
   }
 
   /**
-   * Middle button, Alt, or Space-held: this drag pans, whatever is underneath.
+   * Middle button, right button, Alt, or Space-held: this drag pans, whatever
+   * is underneath.
+   *
+   * Right button is excluded while a wire is pending so right-click can still
+   * finish it (`onContextMenu` below) instead of racing a pan.
    *
    * Every handler that would otherwise take the drag calls this first —
    * parts and wires stop propagation before the background handler ever sees
@@ -445,7 +469,7 @@ export function Canvas({ assetUrls }: { assetUrls: Record<string, string> }) {
    * once on the <svg>.
    */
   function tryPan(e: React.PointerEvent): boolean {
-    if (!(e.button === 1 || e.altKey || spaceRef.current)) return false
+    if (!(e.button === 1 || (e.button === 2 && !pending) || e.altKey || spaceRef.current)) return false
     capture(e)
     setDrag({ kind: 'pan', lastScreen: { x: e.clientX, y: e.clientY } })
     return true
@@ -761,10 +785,9 @@ export function Canvas({ assetUrls }: { assetUrls: Record<string, string> }) {
       onDragLeave={() => setDropAt(null)}
       onDrop={onDrop}
       onContextMenu={(e) => {
-        if (pending) {
-          e.preventDefault()
-          finishWire(toWorld(e))
-        }
+        // Right button now drives panning/finishing a wire, not the native menu.
+        e.preventDefault()
+        if (pending) finishWire(toWorld(e))
       }}
     >
       <CanvasDefs />

@@ -223,6 +223,79 @@ export function removeWires(project: Project, ids: string[]): Project {
   return { ...project, wires: project.wires.filter((w) => !set.has(w.id)) }
 }
 
+export type Stacking = 'front' | 'forward' | 'backward' | 'back'
+
+/**
+ * Reorders a same-side-stacked list in place: `front`/`back` move the whole
+ * selection to the ends; `forward`/`backward` swap each selected item with
+ * its nearest same-side neighbour, so a one-item step actually changes
+ * what's visibly on top instead of being absorbed by an other-side item
+ * sitting in between in the raw array. Shared by `reorderParts` and
+ * `reorderWires`, whose array order IS paint order — Canvas.tsx renders
+ * each side's parts, then that side's wires, each in a filtered pass over
+ * its own array.
+ */
+function reorderBySide<T extends { id: string; side: Side }>(list: T[], ids: string[], stacking: Stacking): T[] {
+  const selected = new Set(ids)
+  if (selected.size === 0) return list
+
+  if (stacking === 'front' || stacking === 'back') {
+    const picked = list.filter((x) => selected.has(x.id))
+    const rest = list.filter((x) => !selected.has(x.id))
+    return stacking === 'front' ? [...rest, ...picked] : [...picked, ...rest]
+  }
+
+  // One step per selected item. Process the topmost first when raising and
+  // the bottommost first when lowering, so movers step past each other
+  // instead of the array shuffling out from under a later swap.
+  let items = list
+  const order = [...ids].sort((a, b) => {
+    const ia = items.findIndex((x) => x.id === a)
+    const ib = items.findIndex((x) => x.id === b)
+    return stacking === 'forward' ? ib - ia : ia - ib
+  })
+
+  for (const id of order) {
+    const item = items.find((x) => x.id === id)
+    if (!item) continue
+    const sameSide = items.filter((x) => x.side === item.side)
+    const si = sameSide.findIndex((x) => x.id === id)
+    const ni = stacking === 'forward' ? si + 1 : si - 1
+    if (ni < 0 || ni >= sameSide.length) continue
+    const neighbor = sameSide[ni]
+    const ai = items.findIndex((x) => x.id === id)
+    const bi = items.findIndex((x) => x.id === neighbor.id)
+    const next = items.slice()
+    ;[next[ai], next[bi]] = [next[bi], next[ai]]
+    items = next
+  }
+
+  return items
+}
+
+export function reorderWires(project: Project, ids: string[], stacking: Stacking): Project {
+  return { ...project, wires: reorderBySide(project.wires, ids, stacking) }
+}
+
+export function reorderParts(project: Project, ids: string[], stacking: Stacking): Project {
+  return { ...project, parts: reorderBySide(project.parts, ids, stacking) }
+}
+
+/**
+ * Reorders parts, and carries their connected wires along with them: any
+ * wire with a pin anchor bound to one of these parts gets the same stacking
+ * command applied within `project.wires`. Otherwise a wire's position in the
+ * stack (chosen relative to other WIRES) would drift out of sync with the
+ * part it's soldered to (chosen relative to other PARTS) the moment either
+ * one is reordered on its own.
+ */
+export function reorderPartsAndWires(project: Project, partIds: string[], stacking: Stacking): Project {
+  const ids = new Set(partIds)
+  const bound = (a: Anchor) => a.kind === 'pin' && ids.has(a.partId)
+  const wireIds = project.wires.filter((w) => bound(w.from) || bound(w.to)).map((w) => w.id)
+  return reorderWires(reorderParts(project, partIds, stacking), wireIds, stacking)
+}
+
 export function putDef(project: Project, def: PartDef): Project {
   return { ...project, defs: { ...project.defs, [def.id]: def } }
 }

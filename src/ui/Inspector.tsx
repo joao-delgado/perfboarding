@@ -5,8 +5,11 @@ import { netIsConnected, type Netlist } from '../model/nets'
 import {
   removeParts,
   removeWires,
+  reorderPartsAndWires,
+  reorderWires,
   rotateParts,
   setPartSide,
+  type Stacking,
   updatePart,
   updateWire,
 } from '../model/project'
@@ -34,6 +37,26 @@ function SideButtons({ value, onPick }: { value: Side | 'mixed'; onPick: (s: Sid
           {sd === 'top' ? 'Top' : 'Bottom'}
         </button>
       ))}
+    </div>
+  )
+}
+
+/** Illustrator-style stacking controls: to back / backward / forward / to front. */
+function OrderButtons({ onPick }: { onPick: (s: Stacking) => void }) {
+  return (
+    <div className="group">
+      <button className="btn small" title="Send to back" onClick={() => onPick('back')}>
+        ⤓
+      </button>
+      <button className="btn small" title="Send backward" onClick={() => onPick('backward')}>
+        ↓
+      </button>
+      <button className="btn small" title="Bring forward" onClick={() => onPick('forward')}>
+        ↑
+      </button>
+      <button className="btn small" title="Bring to front" onClick={() => onPick('front')}>
+        ⤒
+      </button>
     </div>
   )
 }
@@ -175,6 +198,14 @@ export function Inspector({ netlist }: { netlist: Netlist }) {
                 Flipping mirrors the part — it keeps its footprint, but the pins swap ends.
               </div>
             </div>
+
+            <div className="field">
+              <span>Order</span>
+              <OrderButtons
+                onPick={(s) => commit((p) => reorderPartsAndWires(p, selection.parts, s))}
+              />
+              <div className="note">Wires connected to this part move with it.</div>
+            </div>
           </>
         )}
 
@@ -221,6 +252,11 @@ export function Inspector({ netlist }: { netlist: Netlist }) {
                   commit((p) => wires.reduce((acc, w) => updateWire(acc, w.id, { side: sd }), p))
                 }
               />
+            </div>
+
+            <div className="field">
+              <span>Order</span>
+              <OrderButtons onPick={(s) => commit((p) => reorderWires(p, selection.wires, s))} />
             </div>
 
             <label className="field">

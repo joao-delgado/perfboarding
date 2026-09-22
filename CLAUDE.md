@@ -294,9 +294,11 @@ coordinates. Each wire unions its two endpoint anchors. An **edge pad** unions
 the hole nodes of its two cells — the only place two holes are not isolated —
 and it does so *after* parts and wires, bonding only cells something already
 references, so hundreds of untouched pads never materialise as nets. `netIsConnected()`
-follows Fritzing's rule: a net counts as connected when it reaches **≥ 2 distinct
-parts** — which is why a jumper between two holes of the same part shows as
-unconnected.
+extends Fritzing's rule: a net counts as connected when it reaches **≥ 2 distinct
+parts** (so a jumper between two holes of the same part shows as unconnected),
+**or when ≥ 2 wires meet in it** — a wire spliced onto another wire at a shared
+hole with no part there is a real physical join, not a dangling stub, even
+before the run reaches a second component.
 
 ### File format
 
@@ -417,6 +419,8 @@ Legend: `[x]` done · `[ ]` not started · `[~]` partial
       double-click-to-edit. Delete asks for confirmation and calls
       `removeDef`, which also strips every placed instance of that def and any
       wire bound to one of their pins — a board can never reference a missing def
+- [x] **Stacking order** for overlapping parts — Inspector "Order" group,
+      same feature as wires below (`reorderPartsAndWires` in `model/project.ts`)
 
 ### Phase 4 — Wiring  (complete but for the net highlight)
 - [x] Wire tool as an explicit mode (toolbar button, `W`)
@@ -428,6 +432,20 @@ Legend: `[x]` done · `[ ]` not started · `[~]` partial
 - [x] Fat transparent hit-stroke with `vector-effect="non-scaling-stroke"`
 - [x] Dragging an existing waypoint
 - [x] Recolour / re-band a wire after drawing it (select it, click a swatch)
+- [x] **Stacking order**: Inspector "Order" group (to back / backward / forward
+      / to front) on a wire OR part selection, Illustrator-style. Shared
+      `reorderBySide` helper in `model/project.ts` — `project.wires` and
+      `project.parts` array order IS paint order for each (`Canvas.tsx`
+      renders each side's parts, then that side's wires, each in a filtered
+      pass over its own array), so front/back move the selection to the
+      array ends and forward/backward swap an item with its nearest
+      *same-side* neighbour rather than the adjacent array element, so a step
+      is never silently absorbed by an other-side item sitting between them
+      in the raw array. Reordering a part goes through `reorderPartsAndWires`
+      instead of bare `reorderParts`, which also applies the same stacking
+      command to any wire with a pin anchor bound to that part — otherwise a
+      part's cables would visually detach from it (drift to a different
+      position in the independent wire stack) every time the part moves
 - [x] Depth: drop shadows on boards and parts, specular highlight on wires
 - [x] **Double-click a bend to remove it**
 - [x] **Drag a whole segment**: it translates by whole holes and both bound
@@ -689,3 +707,16 @@ DOMPurify 3 ships its own types — do not add `@types/dompurify`.
   TP4056, buck converter and vibration motor on two perfboards) shows the kind
   of project this needs to handle comfortably — but those specific module parts
   were **declined** as built-ins; the user will draw them in the part editor.
+- **Tool/side keyboard shortcuts**: `V` select, `W` wire, `Q` top, `E` bottom
+  — bound in `Canvas.tsx`'s window keydown handler (same guard as the rest:
+  stands down over an input/textarea or the part-editor modal). The toolbar
+  had `(V)`/`(W)` in its button titles for a while before these were actually
+  wired up; if new tools are added, extend this block rather than adding a
+  second key handler.
+- **Wire colour swatches in the toolbar are conditionally rendered**, not
+  just hidden — `Toolbar.tsx` shows the swatch group when `tool === 'wire'`
+  (picking the colour for the next wire you draw) **or** a wire is selected
+  (recolouring it in Select mode, per Phase 4's "recolour after drawing"
+  feature). Plain Select mode with nothing selected shows neither, since the
+  swatches read as "pick a colour to do something" and there's nothing to
+  apply it to.

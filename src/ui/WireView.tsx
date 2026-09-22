@@ -91,8 +91,16 @@ export function WireView({
       )}
 
       {/* Body + a thin specular highlight, so the wire reads as round rather
-          than flat, with a soft drop shadow for depth. */}
-      <g filter={ghosted ? undefined : 'url(#pf-wire-shadow)'} pointerEvents="none">
+          than flat, with a soft drop shadow for depth.
+          A CSS drop-shadow, not the shared SVG filter defs: those use the
+          default objectBoundingBox filter region, and a perfectly
+          horizontal or vertical wire (dx=0 or dy=0) has a zero-width or
+          zero-height bounding box, which collapses that region to nothing
+          and clips the whole wire body away. */}
+      <g
+        style={ghosted ? undefined : { filter: 'drop-shadow(0 0.07px 0.07px rgba(0,0,0,0.4))' }}
+        pointerEvents="none"
+      >
         <polyline
           points={d}
           fill="none"
