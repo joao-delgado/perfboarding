@@ -56,6 +56,9 @@ export interface EditorState {
    *  panel parks the id here on dragstart. */
   dragDefId: string | null
   dirty: boolean
+  /** Bumped by every `load()`. The canvas re-fits the camera whenever it
+   *  changes, so opening a document always frames the whole build. */
+  loadSeq: number
 }
 
 const initial: EditorState = {
@@ -73,6 +76,7 @@ const initial: EditorState = {
   hoverNet: null,
   dragDefId: null,
   dirty: false,
+  loadSeq: 0,
 }
 
 const UNDO_LIMIT = 100
@@ -120,7 +124,15 @@ export function commit(fn: (p: Project) => Project, coalesce = false): void {
 
 /** Replace the whole document (open a file, new project). Clears history. */
 export function load(project: Project, dirty = false): void {
-  state = { ...state, project, past: [], future: [], selection: EMPTY_SELECTION, dirty }
+  state = {
+    ...state,
+    project,
+    past: [],
+    future: [],
+    selection: EMPTY_SELECTION,
+    dirty,
+    loadSeq: state.loadSeq + 1,
+  }
   emit()
 }
 

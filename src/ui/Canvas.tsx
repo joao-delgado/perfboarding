@@ -15,9 +15,10 @@ import {
   type Bounds,
 } from '../model/geometry'
 import { computeNets } from '../model/nets'
+import { hiddenIds } from '../model/visibility'
 import { boardExtent } from '../model/pads'
 import { partOutlinePoints } from '../model/shapes'
-import { boardAt, isHole, moveBoard } from '../model/project'
+import { boardAt, contentBounds, isHole, moveBoard } from '../model/project'
 import {
   addPart,
   addWire,
@@ -117,9 +118,12 @@ export function Canvas({ assetUrls }: { assetUrls: Record<string, string> }) {
   const lastDown = useRef<{ key: string; t: number } | null>(null)
 
   const { project, camera, side, tool, selection, showFarSide, showNets, hoverNet, dragDefId } = s
-  /** World-space box covering every board, used for fit and for the mirror axis.
-   *  Measured on the padded extent, so edge pads are inside the fit and the
-   *  bottom-view mirror axis stays at the true centre of the artwork. */
+  const loadSeq = s.loadSeq
+  /** World-space box covering every board, used for the mirror axis and the
+   *  background grid. Measured on the padded extent, so edge pads are inside
+   *  it. The axis deliberately tracks the BOARDS and not the whole build:
+   *  mirroring about a moving axis would make the view jump every time you
+   *  added an off-board part while looking from below. */
   const worldBox = useMemo(() => {
     if (project.boards.length === 0) return { minX: 0, minY: 0, maxX: 10, maxY: 10 }
     const extents = project.boards.map(boardExtent)
@@ -131,6 +135,12 @@ export function Canvas({ assetUrls }: { assetUrls: Record<string, string> }) {
     }
   }, [project.boards])
 
+  /** Components switched off in the Components panel, plus the wiring attached
+   *  to them. Hidden objects are neither drawn nor hit-tested — but they stay
+   *  in the netlist and keep occupying their holes, because hiding is a view
+   *  state, not a deletion. */
+  const hidden = useMemo(() => hiddenIds(project), [project])
+
   const view: View = useMemo(
     () => ({
       camera,
@@ -139,6 +149,21 @@ export function Canvas({ assetUrls }: { assetUrls: Record<string, string> }) {
     }),
     [camera, side, worldBox],
   )
+
+  /** World rect the dot grid covers: whatever the viewport currently sees,
+   *  padded a little. Sizing it from the artwork instead left bare canvas
+   *  wherever the window was wider than the build — the grid has to read as
+   *  infinite paper, so it follows the camera, not the document. */
+  const gridBox = useMemo(() => {
+    const a = screenToWorld(view, { x: 0, y: 0 })
+    const b = screenToWorld(view, { x: size.w, y: size.h })
+    return {
+      minX: Math.floor(Math.min(a.x, b.x)) - 2,
+      minY: Math.floor(Math.min(a.y, b.y)) - 2,
+      maxX: Math.ceil(Math.max(a.x, b.x)) + 2,
+      maxY: Math.ceil(Math.max(a.y, b.y)) + 2,
+    }
+  }, [view, size])
 
   const netlist = useMemo(() => computeNets(project), [project])
 
@@ -159,12 +184,44 @@ export function Canvas({ assetUrls }: { assetUrls: Record<string, string> }) {
     return () => ro.disconnect()
   }, [])
 
-  const fitted = useRef(false)
+  /**
+   * Frame the WHOLE build — boards, off-board parts and every wire.
+   *
+   * Two separate bugs used to leave a freshly opened project off-centre:
+   * fitting the BOARD extents alone pushed anything hanging off the boards (a
+   * battery, a panel switch and their wiring) out of frame, and the single
+   * fit ran on the first viewport measurement, which is taken before the
+   * layout has settled — so the camera was framed for a canvas much smaller
+   * than the one you end up looking at.
+   *
+   * So: re-fit on `loadSeq` (session restore, file open, New) and on every
+   * later viewport change until the user moves the camera themselves. Once
+   * they have panned or zoomed, the framing is theirs and resizing the window
+   * must not throw it away. Content changes never re-fit — the camera may not
+   * jump while you are drawing.
+   */
+  const fittedSeq = useRef(-1)
+  const cameraMoved = useRef(false)
   useEffect(() => {
-    if (fitted.current || size.w < 50) return
-    fitted.current = true
-    set({ camera: fitBox(worldBox, size.w, size.h) })
-  }, [size, worldBox])
+    if (size.w < 50) return
+    const reload = fittedSeq.current !== loadSeq
+    if (!reload && cameraMoved.current) return
+    fittedSeq.current = loadSeq
+    cameraMoved.current = false
+    const st = getState()
+    const box = contentBounds(st.project)
+    const axis = (worldBox.minX + worldBox.maxX) / 2
+    // fitBox works in unmirrored screen space, so from below we fit the
+    // reflected box — otherwise the frame is off by twice the distance
+    // between the build's centre and the mirror axis.
+    const framed =
+      st.side === 'bottom'
+        ? { ...box, minX: 2 * axis - box.maxX, maxX: 2 * axis - box.minX }
+        : box
+    set({ camera: fitBox(framed, size.w, size.h) })
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- content and side
+    // are read live on purpose: an edit must never re-frame the canvas.
+  }, [size, loadSeq, worldBox])
 
   // Wheel must be non-passive or the browser page-zooms on trackpad pinch.
   useEffect(() => {
@@ -172,6 +229,7 @@ export function Canvas({ assetUrls }: { assetUrls: Record<string, string> }) {
     if (!el) return
     const onWheel = (e: WheelEvent) => {
       e.preventDefault()
+      cameraMoved.current = true
       const rect = el.getBoundingClientRect()
       const p = { x: e.clientX - rect.left, y: e.clientY - rect.top }
       const cam = getState().camera
@@ -225,6 +283,7 @@ export function Canvas({ assetUrls }: { assetUrls: Record<string, string> }) {
     (w: Vec): Anchor => {
       let best: { d: number; a: Anchor } | null = null
       for (const inst of project.parts) {
+        if (hidden.parts.has(inst.id)) continue
         const def = project.defs[inst.defId]
         if (!def) continue
         for (const [pinId, pos] of partPinPositions(def, inst)) {
@@ -241,7 +300,7 @@ export function Canvas({ assetUrls }: { assetUrls: Record<string, string> }) {
       }
       return { kind: 'free', x: Math.round(w.x * 4) / 4, y: Math.round(w.y * 4) / 4 }
     },
-    [project],
+    [project, hidden],
   )
 
   /**
@@ -254,6 +313,7 @@ export function Canvas({ assetUrls }: { assetUrls: Record<string, string> }) {
     (w: Vec): { label: string; pos: Vec } | null => {
       let best: { d: number; label: string; pos: Vec } | null = null
       const consider = (inst: PartInstance) => {
+        if (hidden.parts.has(inst.id)) return
         const def = project.defs[inst.defId]
         if (!def) return
         for (const [pinId, pos] of partPinPositions(def, inst)) {
@@ -268,7 +328,7 @@ export function Canvas({ assetUrls }: { assetUrls: Record<string, string> }) {
       for (const inst of project.parts) if (inst.side !== side) consider(inst)
       return best
     },
-    [project, side],
+    [project, side, hidden],
   )
 
   /** Bends want the lattice when they are over it, and quarter steps when not. */
@@ -286,14 +346,14 @@ export function Canvas({ assetUrls }: { assetUrls: Record<string, string> }) {
       // Topmost first, and only on the side we are working on.
       for (let i = project.parts.length - 1; i >= 0; i--) {
         const inst = project.parts[i]
-        if (inst.side !== side) continue
+        if (inst.side !== side || hidden.parts.has(inst.id)) continue
         const def = project.defs[inst.defId]
         if (!def) continue
         if (pointInPolygon(w, partOutlinePoints(def, inst))) return inst.id
       }
       return null
     },
-    [project, side],
+    [project, side, hidden],
   )
 
   /** A hole that already holds someone else's pin cannot take another. */
@@ -357,8 +417,12 @@ export function Canvas({ assetUrls }: { assetUrls: Record<string, string> }) {
         e.preventDefault()
         set({
           selection: {
-            parts: project.parts.filter((p) => p.side === side).map((p) => p.id),
-            wires: project.wires.filter((w) => w.side === side).map((w) => w.id),
+            parts: project.parts
+              .filter((p) => p.side === side && !hidden.parts.has(p.id))
+              .map((p) => p.id),
+            wires: project.wires
+              .filter((w) => w.side === side && !hidden.wires.has(w.id))
+              .map((w) => w.id),
             boards: [],
           },
         })
@@ -553,6 +617,7 @@ export function Canvas({ assetUrls }: { assetUrls: Record<string, string> }) {
     if (drag.kind === 'pan') {
       const dx = e.clientX - drag.lastScreen.x
       const dy = e.clientY - drag.lastScreen.y
+      cameraMoved.current = true
       set({ camera: { ...getState().camera, x: getState().camera.x + dx, y: getState().camera.y + dy } })
       setDrag({ ...drag, lastScreen: { x: e.clientX, y: e.clientY } })
       return
@@ -639,14 +704,14 @@ export function Canvas({ assetUrls }: { assetUrls: Record<string, string> }) {
   function applyMarquee(box: Bounds, additive: boolean) {
     const parts: string[] = []
     for (const inst of project.parts) {
-      if (inst.side !== side) continue
+      if (inst.side !== side || hidden.parts.has(inst.id)) continue
       const def = project.defs[inst.defId]
       if (!def) continue
       if (boundsOverlap(boundsOf(partOutlinePoints(def, inst)), box)) parts.push(inst.id)
     }
     const wires: string[] = []
     for (const wire of project.wires) {
-      if (wire.side !== side) continue
+      if (wire.side !== side || hidden.wires.has(wire.id)) continue
       const pts = wirePoints(wire, pinAt)
       for (let i = 0; i < pts.length - 1; i++) {
         if (segmentIntersectsBounds(pts[i], pts[i + 1], box)) {
@@ -793,10 +858,10 @@ export function Canvas({ assetUrls }: { assetUrls: Record<string, string> }) {
       <CanvasDefs />
       <g transform={rootTransform(view)}>
         <CanvasGrid
-          minX={worldBox.minX - 30}
-          minY={worldBox.minY - 30}
-          cols={worldBox.maxX - worldBox.minX + 60}
-          rows={worldBox.maxY - worldBox.minY + 60}
+          minX={gridBox.minX}
+          minY={gridBox.minY}
+          cols={gridBox.maxX - gridBox.minX}
+          rows={gridBox.maxY - gridBox.minY}
         />
         {project.boards.map((b) => (
           <BoardSurface key={b.id} board={b} selected={selection.boards.includes(b.id)} />
@@ -805,7 +870,7 @@ export function Canvas({ assetUrls }: { assetUrls: Record<string, string> }) {
         {/* Far side first, so near-side content paints over it. */}
         {showFarSide &&
           project.wires
-            .filter((w) => w.side !== side)
+            .filter((w) => w.side !== side && !hidden.wires.has(w.id))
             .map((w) => (
               <WireView
                 key={w.id}
@@ -824,7 +889,7 @@ export function Canvas({ assetUrls }: { assetUrls: Record<string, string> }) {
             hole they occupy, because a hole taken from the other face still
             has to be visible from this one. */}
         {project.parts
-          .filter((p) => p.side !== side)
+          .filter((p) => p.side !== side && !hidden.parts.has(p.id))
           .map((inst) => {
             const def = project.defs[inst.defId]
             if (!def) return null
@@ -845,7 +910,7 @@ export function Canvas({ assetUrls }: { assetUrls: Record<string, string> }) {
           })}
 
         {project.parts
-          .filter((p) => p.side === side)
+          .filter((p) => p.side === side && !hidden.parts.has(p.id))
           .map((inst) => {
             const def = project.defs[inst.defId]
             if (!def) return null
@@ -881,7 +946,7 @@ export function Canvas({ assetUrls }: { assetUrls: Record<string, string> }) {
         ))}
 
         {project.wires
-          .filter((w) => w.side === side)
+          .filter((w) => w.side === side && !hidden.wires.has(w.id))
           .map((w) => (
             <WireView
               key={w.id}

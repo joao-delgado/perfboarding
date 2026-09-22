@@ -1,31 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { boundsOf } from '../model/geometry'
-import { sampleOutline } from '../model/shapes'
 import { set } from '../model/store'
 import type { PartDef } from '../model/types'
-import { PartGraphics } from './PartGraphics'
+import { PartThumb } from './PartThumb'
 import { Section } from './Section'
-
-function Thumb({ def, assetUrls }: { def: PartDef; assetUrls: Record<string, string> }) {
-  const b = boundsOf([...sampleOutline(def.outline), ...def.pins])
-  const pad = 0.6
-  const w = Math.max(0.5, b.maxX - b.minX) + pad * 2
-  const h = Math.max(0.5, b.maxY - b.minY) + pad * 2
-  return (
-    <svg
-      viewBox={`${b.minX - pad} ${b.minY - pad} ${w} ${h}`}
-      width={52}
-      height={40}
-      style={{ display: 'block' }}
-    >
-      <PartGraphics def={def} idPrefix={`thumb-${def.id}`} assetUrls={assetUrls} />
-      {def.pins.map((p) => (
-        <circle key={p.id} cx={p.x} cy={p.y} r={0.18} fill="#ddd" stroke="#666" strokeWidth={0.08} />
-      ))}
-    </svg>
-  )
-}
 
 /** Rough dropdown height, for deciding whether it needs to open upward. */
 const MENU_HEIGHT = 80
@@ -143,7 +121,7 @@ export function PartsPanel({ defs, assetUrls, onNewPart, onEditPart, onDeletePar
   return (
     <Section
       id="parts"
-      title="Parts"
+      title="Library"
       grow
       headerExtra={
         <button className="btn small" onClick={onNewPart}>
@@ -151,7 +129,7 @@ export function PartsPanel({ defs, assetUrls, onNewPart, onEditPart, onDeletePar
         </button>
       }
     >
-      <div className="parts-list">
+      <div className="parts-grid">
         {defs.map((def) => (
           <div
             key={def.id}
@@ -168,15 +146,15 @@ export function PartsPanel({ defs, assetUrls, onNewPart, onEditPart, onDeletePar
             onDoubleClick={() => onEditPart(def.id)}
             title={`${def.name} — drag onto the board, double-click to edit`}
           >
-            <Thumb def={def} assetUrls={assetUrls} />
-            <div className="part-meta">
-              <div className="part-name">{def.name}</div>
-              <div className="part-sub">
-                {def.pins.length} pin{def.pins.length === 1 ? '' : 's'}
-                {def.builtin ? '' : ' · custom'}
-              </div>
-            </div>
             <PartMenu onEdit={() => onEditPart(def.id)} onDelete={() => onDeletePart(def.id)} />
+            <div className="part-thumb">
+              <PartThumb def={def} assetUrls={assetUrls} width={78} height={56} />
+            </div>
+            <div className="part-name">{def.name}</div>
+            <div className="part-sub">
+              {def.pins.length} pin{def.pins.length === 1 ? '' : 's'}
+              {def.builtin ? '' : ' · custom'}
+            </div>
           </div>
         ))}
         {defs.length === 0 && <div className="empty">No parts yet.</div>}

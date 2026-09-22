@@ -78,3 +78,36 @@ export function InfoIcon({ size = 15 }: IconProps) {
     </>,
   )
 }
+
+export function EyeIcon({ size = 15 }: IconProps) {
+  return box(
+    size,
+    <>
+      <path
+        d="M1.3 7.5 C 3.6 3.6, 11.4 3.6, 13.7 7.5 C 11.4 11.4, 3.6 11.4, 1.3 7.5 Z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={1.2}
+        strokeLinejoin="round"
+      />
+      <circle cx={7.5} cy={7.5} r={1.9} fill="currentColor" />
+    </>,
+  )
+}
+
+export function EyeOffIcon({ size = 15 }: IconProps) {
+  return box(
+    size,
+    <>
+      <path
+        d="M1.3 7.5 C 3.6 3.6, 11.4 3.6, 13.7 7.5 C 11.4 11.4, 3.6 11.4, 1.3 7.5 Z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={1.2}
+        strokeLinejoin="round"
+      />
+      <circle cx={7.5} cy={7.5} r={1.9} fill="none" stroke="currentColor" strokeWidth={1.1} />
+      <path d="M2.4 12.6 L12.6 2.4" stroke="currentColor" strokeWidth={1.4} strokeLinecap="round" />
+    </>,
+  )
+}

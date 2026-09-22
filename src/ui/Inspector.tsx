@@ -89,7 +89,7 @@ export function Inspector({ netlist }: { netlist: Netlist }) {
   return (
     <Section
       id="inspector"
-      title="Inspector"
+      title="Properties"
       defaultHeight={260}
       headerExtra={
         !nothing && (

@@ -12,6 +12,7 @@ import { builtinMap } from '../parts/builtin'
 import { Canvas } from './Canvas'
 import { PartEditor } from './PartEditor'
 import { PartsPanel } from './PartsPanel'
+import { ComponentsPanel } from './ComponentsPanel'
 import { BoardsPanel } from './BoardsPanel'
 import { Inspector } from './Inspector'
 import { Toolbar } from './Toolbar'
@@ -200,7 +201,7 @@ export default function App() {
         </div>
         <aside className="side">
           <Inspector netlist={netlist} />
-          <BoardsPanel />
+          <ComponentsPanel assetUrls={assetUrls} />
           <PartsPanel
             defs={defs}
             assetUrls={assetUrls}
@@ -215,6 +216,7 @@ export default function App() {
               setStatus(`Deleted part "${def?.name ?? id}"`)
             }}
           />
+          <BoardsPanel />
         </aside>
       </div>
       {editing && (

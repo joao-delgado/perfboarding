@@ -172,6 +172,13 @@ export interface PartInstance {
   side: Side
   ref: string
   locked?: boolean
+  /**
+   * Hidden from the canvas (the Components panel's eye toggle). Purely a view
+   * property: a hidden part still occupies its holes and still takes part in
+   * `computeNets`, so hiding can never change what the project means
+   * electrically. See `model/visibility.ts`.
+   */
+  hidden?: boolean
 }
 
 /**

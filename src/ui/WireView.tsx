@@ -77,7 +77,7 @@ export function WireView({
   const grab = Math.max(0.26, pxScale * 9)
 
   return (
-    <g opacity={ghosted ? 0.22 : 1} pointerEvents={ghosted ? 'none' : 'auto'}>
+    <g data-wire-id={wire.id} opacity={ghosted ? 0.22 : 1} pointerEvents={ghosted ? 'none' : 'auto'}>
       {lit && (
         <polyline
           points={d}

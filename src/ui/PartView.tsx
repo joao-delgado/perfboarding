@@ -70,6 +70,7 @@ export function PartView({
 
   return (
     <g
+      data-part-id={inst.id}
       pointerEvents={ghosted ? 'none' : 'auto'}
       onPointerDown={onPointerDown}
       style={{ cursor: ghosted ? 'default' : 'move' }}

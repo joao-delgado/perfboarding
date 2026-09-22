@@ -287,36 +287,151 @@ body,
   background: var(--accent);
 }
 
-.parts-list {
+/* Components panel: one row per placed part, with an eye toggle. */
+.comp-list {
   overflow: auto;
   padding: 6px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
 }
 
-.part-card {
+.comp-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 5px 6px;
+  gap: 6px;
+  padding: 3px 5px;
   border: 1px solid transparent;
-  border-radius: 6px;
-  cursor: grab;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 12px;
 }
 
-.part-card:hover {
+.comp-row:hover {
   border-color: var(--line);
   background: #fbfaf8;
 }
 
-.part-meta {
+.comp-row.sel {
+  border-color: var(--accent);
+  background: #f2f8fd;
+}
+
+.comp-row.off {
+  cursor: default;
+}
+
+.comp-row.off .comp-thumb,
+.comp-row.off .comp-name,
+.comp-row.off .comp-side {
+  opacity: 0.45;
+}
+
+.comp-eye {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  background: none;
+  border-radius: 4px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.comp-eye:hover {
+  background: #eceae5;
+  color: var(--text);
+}
+
+.comp-row.off .comp-eye {
+  color: var(--muted);
+  opacity: 0.8;
+}
+
+.comp-thumb {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 24px;
+}
+
+.comp-name {
   flex: 1;
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.comp-side {
+  flex: none;
+  font-size: 10px;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0 4px;
+  line-height: 15px;
+}
+
+.head-count {
+  font-size: 11px;
+  color: var(--muted);
+  padding-right: 2px;
+}
+
+.parts-grid {
+  overflow: auto;
+  padding: 6px;
+  display: grid;
+  /* Cards size themselves to the sidebar's current width; the sidebar is
+     resizable, so a fixed column count would either overflow or waste space. */
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 6px;
+  align-content: start;
+}
+
+.parts-grid .empty {
+  grid-column: 1 / -1;
+}
+
+.part-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 4px 5px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  cursor: grab;
+  text-align: center;
+}
+
+.part-card:hover {
+  border-color: var(--accent);
+  background: #fbfaf8;
+}
+
+.part-thumb {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 56px;
+  width: 100%;
 }
 
 .part-name {
-  font-size: 12px;
+  font-size: 11.5px;
+  line-height: 1.25;
+  /* Full names, wrapped: the whole point of the card is to identify the part. */
+  overflow-wrap: anywhere;
 }
 
 .part-sub {
@@ -325,8 +440,15 @@ body,
 }
 
 .part-menu {
-  position: relative;
-  flex: none;
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  opacity: 0;
+}
+
+.part-card:hover .part-menu,
+.part-menu:focus-within {
+  opacity: 1;
 }
 
 .part-menu-btn {

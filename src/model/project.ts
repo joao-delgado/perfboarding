@@ -1,7 +1,14 @@
-import { boundsOf, partToBoard, rotatePoint, snapToHole } from './geometry'
+import {
+  type Bounds,
+  boundsOf,
+  partPinPositions,
+  partToBoard,
+  rotatePoint,
+  snapToHole,
+} from './geometry'
 import { uid } from './ids'
 import { boardExtent, isGridHole, isPadCell } from './pads'
-import { sampleOutline } from './shapes'
+import { partOutlinePoints, sampleOutline } from './shapes'
 import type { Anchor, Board, PartDef, PartInstance, Project, Rotation, Side, Vec, Wire } from './types'
 import { DEFAULT_BOARD_COLOR, DEFAULT_PAD_COLOR } from './types'
 
@@ -92,6 +99,37 @@ export function boardAt(project: Project, x: number, y: number): Board | undefin
     const e = boardExtent(b)
     return x >= e.minX && y >= e.minY && x <= e.maxX && y <= e.maxY
   })
+}
+
+/**
+ * World-space box covering everything the project actually draws: every
+ * board's full extent (pads included), every part body and pin, and every
+ * wire vertex — on BOTH sides, since the view flips.
+ *
+ * Boards alone are not the build. Off-board parts (a battery, a panel switch)
+ * and the wires reaching them live outside every board extent, so fitting the
+ * board bounds pushes them off-screen and leaves the artwork visibly
+ * off-centre. Pin anchors need no case of their own: a pin follows its part
+ * and the part's own points are already in here.
+ */
+export function contentBounds(project: Project): Bounds {
+  const pts: Vec[] = []
+  for (const b of project.boards) {
+    const e = boardExtent(b)
+    pts.push({ x: e.minX, y: e.minY }, { x: e.maxX, y: e.maxY })
+  }
+  for (const inst of project.parts) {
+    const def = project.defs[inst.defId]
+    if (!def) continue
+    pts.push(...partOutlinePoints(def, inst))
+    for (const p of partPinPositions(def, inst).values()) pts.push(p)
+  }
+  for (const w of project.wires) {
+    for (const a of [w.from, w.to]) if (a.kind !== 'pin') pts.push({ x: a.x, y: a.y })
+    pts.push(...w.waypoints)
+  }
+  if (pts.length === 0) return { minX: 0, minY: 0, maxX: 10, maxY: 10 }
+  return boundsOf(pts)
 }
 
 /** Is there something solderable at this canvas cell — a lattice hole or an

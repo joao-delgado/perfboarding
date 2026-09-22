@@ -84,6 +84,12 @@ if you need to go deeper on one specific point.
 - Wiring is complete as a tool: draw by clicking or dragging, add and remove
   bends, drag a segment, re-bind an endpoint, per-wire colour and banding.
 - Selection: single click, shift-click to toggle, marquee on the board.
+- **Sidebar sections, top to bottom**: **Properties** (was "Inspector" — same
+  component/id, title text only), **Components**, **Library**, **Boards**. The
+  parts catalogue is "Library", laid out as a card grid; "Components" above
+  it lists every part actually placed on the canvas — thumbnail and full part
+  name, no ref designator — each with an eye toggle that hides the part **and
+  the wiring attached to it** (`model/visibility.ts`).
 - `Inspector.tsx` gives the selected object its properties — including the
   side a placed part is mounted on, which used to be fixed at drop time.
 - **Design-rule checking has been removed.** No `drc.ts`, no Issues panel.
@@ -123,6 +129,7 @@ These were answered directly by the user. Do not reopen them without being asked
 | Rubber band vs board drag | Dragging the board surface **rubber-bands**; a board only moves once it is selected (click it first) | The board covers the canvas, so marquee has to win the ambiguous gesture — selecting parts on a board is the common act, moving the board is the rare one. Alt or middle-drag still pans |
 | Flipping a part's side | Keeps the **footprint**, not the pin identities: the origin shifts so the part occupies the same holes | Mounting from below mirrors the part, so identical pin positions are impossible unless it is symmetric. Same holes, pins swapped ends, is what physically happens when you re-insert it from the other face |
 | Double-click detection | Recognised **by hand** in `Canvas.tsx` (`doubleClicked`), not with `onDoubleClick` | `setPointerCapture` retargets the browser's compatibility mouse events, so the native dblclick lands on the `<svg>` instead of the bend you aimed at. See Gotchas |
+| Hiding a component | The Components panel's eye toggle sets `hidden` on the **PartInstance** (so it saves with the project and undoes like any edit), and hides the wiring attached to that part as well. It is view-only: `computeNets` never reads it, and a hidden part still occupies its holes | You hide a component to see what is underneath it, not to remove it. Letting it drop out of the netlist would make "hidden" silently mean "deleted", and a drop onto its holes would then succeed and produce a physically impossible board |
 | Seed parts | **Passives & basics**: resistor, capacitor (radial + ceramic), LED, diode, tactile switch, slide switch, 2-pin screw terminal, pin header (configurable length) | The user declined the ESP32/TP4056 module set and the parametric DIP/SIP set |
 
 ---
@@ -320,6 +327,7 @@ src/
     geometry.ts    ✅ rotation, part↔board transforms, snapping, ortho assist, hit-test math
     nets.ts        ✅ union-find connectivity
     pads.ts        ✅ edge pad strips: layout, cell lookup, board extent
+    visibility.ts  ✅ which parts/wires are hidden from the canvas
     project.ts     ✅ create/mutate helpers
     store.ts       ✅ editor state, undo/redo, useSyncExternalStore
   parts/
@@ -332,7 +340,9 @@ src/
     PartView.tsx   ✅ outline, pins, texture clip, ref label
     WireView.tsx   ✅ polyline, banded overdraw, hit-stroke, handles
     Toolbar.tsx    ✅ tools, side toggle, colours, board size, undo/redo
-    PartsPanel.tsx ✅ right-hand palette with thumbnails, drag to canvas
+    PartsPanel.tsx ✅ "Library": card GRID of part DEFINITIONS, drag to canvas
+    ComponentsPanel.tsx ✅ "Components": every PLACED part, with an eye toggle
+    PartThumb.tsx  ✅ a def drawn to fit a box, shared by both of those
     Inspector.tsx  ✅ selected-object properties, including part side and net name
     PartEditor.tsx ✅ full-screen modal: pen tool, pins, texture
   io/
@@ -374,7 +384,11 @@ Legend: `[x]` done · `[ ]` not started · `[~]` partial
       text counter-mirrored
 - [x] Board size UI (cols/rows, 3–199) — per board, in the Boards panel
 - [x] Multiple boards: add, remove, rename, recolour, drag to reposition
-- [x] Background canvas grid that boards snap to
+- [x] Background canvas grid that boards snap to — sized from the CAMERA, so it
+      always fills the viewport however wide the window is
+- [x] **Fit the whole build on load**: the camera frames `contentBounds`
+      (boards + parts + wires), re-fitting on every viewport change until the
+      user first pans or zooms
 - [x] Warn above ~2000 holes (shown per board in the Boards panel)
 - [x] **Edge pads**: per board, a pad strip on any of the four edges. One pad
       per lattice row/column, each covering two cells reaching outward and
@@ -526,6 +540,10 @@ Legend: `[x]` done · `[ ]` not started · `[~]` partial
       the same way `BoardSurface` sizes the substrate rect (hole span + the
       0.6-hole edge margin per side), so it matches what's actually drawn,
       not just `cols × rows` holes
+- [x] **Components panel** — every placed part listed above the Library, with
+      a per-row eye that hides the part and its wiring from the canvas
+- [x] Sidebar reordered/relabelled: Properties (renamed from Inspector),
+      Components, Library, Boards
 - [ ] Copy/paste/duplicate
 - [ ] Cursor-as-affordance
 - [ ] Colour-wires-by-length toggle
@@ -550,6 +568,29 @@ DOMPurify 3 ships its own types — do not add `@types/dompurify`.
 
 ## Gotchas
 
+- **The opening camera frames `contentBounds`, not the boards.** A build's
+  off-board parts (battery, panel switch) and their wiring sit outside every
+  board extent, so fitting board bounds alone shoved them off-screen and left
+  the artwork visibly off-centre. `contentBounds` (`model/project.ts`) unions
+  board extents, part outlines, pins and wire vertices. Two further traps live
+  in that one effect in `Canvas.tsx`: the FIRST viewport measurement arrives
+  before layout has settled, so a one-shot fit frames a canvas smaller than the
+  one you end up looking at — it therefore re-fits on every size change until
+  `cameraMoved` is set (any wheel or pan marks it, and a `load()` clears it, so
+  the user's own framing survives a window resize); and `fitBox` works in
+  UNMIRRORED screen space, so from the bottom side the box must be reflected
+  about the mirror axis first. It reads the project and side live rather than
+  taking them as deps — re-fitting on a content change would yank the camera
+  mid-edit.
+- **`loadSeq` in the store is what "a new document was opened" means.**
+  `load()` bumps it (session restore, file open, New); `commit()` never does.
+  Anything that should reset per-document view state keys off it.
+- **The dot grid follows the camera, not the document.** `gridBox` in
+  `Canvas.tsx` is the viewport corners run through `screenToWorld`, padded two
+  holes. Sizing it from the artwork (the old `worldBox ± 30`) left bare canvas
+  on a wide monitor, since it has to read as infinite paper. It stays one
+  `<rect>` + `<pattern>`, and being inside the mirrored root means the
+  screen→world corners already handle the bottom view.
 - **Never put holes in the DOM.** One `<rect>` + `<pattern>`. A 20×14 board is
   280 holes but the user can go to 199×199 ≈ 40,000.
 - **Snap the whole pin lattice, not one pin.** Fritzing's single-anchor bug is
@@ -633,6 +674,9 @@ DOMPurify 3 ships its own types — do not add `@types/dompurify`.
   removes every placed instance of it and any wire bound to one of their pins
   (same cascade `removeParts` already does for a canvas delete) — it is not a
   library-only removal.
+- **Both part lists render through `ui/PartThumb.tsx`.** It sizes itself by
+  `viewBox` + `preserveAspectRatio`, so a caller only passes a box — do not
+  reintroduce a second copy of the bounds maths in a panel.
 - **Any dropdown/popover opened from inside a `Section` must be portaled.**
   `.section-body` is `overflow: auto` (that's how a resized section scrolls
   its own content), so a normal `position: absolute` child clips the instant
@@ -646,6 +690,11 @@ DOMPurify 3 ships its own types — do not add `@types/dompurify`.
   one pad per row/column, no gap, solid copper. A first pass offered `2 along` /
   `2 across` / `single` as a per-board setting and the user removed it against a
   reference image — do not reintroduce pad-size options.
+- **The bottom-view mirror axis tracks the BOARDS, deliberately.** `worldBox`
+  in `Canvas.tsx` is still the padded board extents and still sets
+  `view.mirrorAxis`. Any axis is equivalent up to a pan, but an axis that moved
+  with the content would make the whole view jump every time you added an
+  off-board part while looking from below.
 - **A board's footprint is `boardExtent` (`src/model/pads.ts`), not `cols`/`rows`.**
   Edge pads sit outside the hole lattice, so the moment a board has a strip the
   two disagree. Everything that asks "how big is this board / what does it
@@ -707,6 +756,23 @@ DOMPurify 3 ships its own types — do not add `@types/dompurify`.
   TP4056, buck converter and vibration motor on two perfboards) shows the kind
   of project this needs to handle comfortably — but those specific module parts
   were **declined** as built-ins; the user will draw them in the part editor.
+- **Hiding is a view state, never a document edit in disguise.** `hidden` on a
+  `PartInstance` keeps the part in `computeNets`, in `netlist.pinsByHole` and
+  therefore in `blockedFor` — a hidden part's holes still refuse another part's
+  pins, which is deliberate: the part is still physically there. `hiddenIds`
+  (`model/visibility.ts`) is the single place that decides what disappears, and
+  `Canvas.tsx` consults it in BOTH the render filters and every hit test
+  (`partUnder`, `resolveAnchor`, `findHoverPin`, the marquee, Cmd+A). Filter one
+  and not the other and you get an invisible object that still takes clicks.
+- **A hidden part's wires are found by anchor, not by proximity.** A wire hides
+  with the part when an endpoint is a pin anchor bound to it, or a hole anchor
+  in one of its pin holes — and that hole must not be shared with a *visible*
+  part, or the join is still on screen and its wire has to stay. Waypoints
+  crossing the part mean nothing.
+- **`data-part-id` / `data-wire-id` on the rendered `<g>`s exist for CDP
+  driving.** Nothing in the app reads them; they are the stable handle a
+  headless-Chrome driver uses to assert what is actually on the canvas. Keep
+  them on the outermost group of `PartView`/`WireView`.
 - **Tool/side keyboard shortcuts**: `V` select, `W` wire, `Q` top, `E` bottom
   — bound in `Canvas.tsx`'s window keydown handler (same guard as the rest:
   stands down over an input/textarea or the part-editor modal). The toolbar
