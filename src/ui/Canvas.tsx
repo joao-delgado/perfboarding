@@ -5,6 +5,7 @@ import {
   boundsOf,
   boundsOverlap,
   constrain8,
+  distToSegment,
   orthoAssist,
   partPinPositions,
   pointInPolygon,
@@ -74,6 +75,14 @@ const MIN_DRAG_PX = 6
 /** A wire shorter than this is a twitch, not a connection. */
 const MIN_WIRE_LEN = 0.4
 
+/* ---- mobile touch gestures --------------------------------------------- */
+/** A touch stays a tap, rather than becoming a pan, inside this radius. */
+const TAP_SLOP_PX = 10
+/** ...and only if it lifts this soon. A long press is not a tap. */
+const TAP_MS = 500
+/** Finger-sized pick radius for tapping a wire, in screen px. */
+const TAP_PICK_PX = 14
+
 /**
  * Translate one segment of a wire, keeping both bound endpoints where they are.
  *
@@ -101,7 +110,18 @@ function polylineLength(pts: Vec[]): number {
   return n
 }
 
-export function Canvas({ assetUrls }: { assetUrls: Record<string, string> }) {
+/**
+ * `mobile` puts the canvas in VIEW-ONLY mode: every editing gesture stands
+ * down and a touch gesture layer (one finger pans, two pinch-zoom, a tap
+ * selects for the Properties panel) takes the pointer stream instead.
+ */
+export function Canvas({
+  assetUrls,
+  mobile = false,
+}: {
+  assetUrls: Record<string, string>
+  mobile?: boolean
+}) {
   const s = useEditor()
   const svgRef = useRef<SVGSVGElement>(null)
   const [size, setSize] = useState({ w: 800, h: 600 })
@@ -202,12 +222,16 @@ export function Canvas({ assetUrls }: { assetUrls: Record<string, string> }) {
    */
   const fittedSeq = useRef(-1)
   const cameraMoved = useRef(false)
-  useEffect(() => {
+
+  /**
+   * Frame the whole build right now.
+   *
+   * Project and side are read LIVE through `getState()` rather than closed
+   * over, which is what keeps an edit from ever re-framing the canvas: this
+   * callback's identity only changes with the viewport and the board extents.
+   */
+  const applyFit = useCallback(() => {
     if (size.w < 50) return
-    const reload = fittedSeq.current !== loadSeq
-    if (!reload && cameraMoved.current) return
-    fittedSeq.current = loadSeq
-    cameraMoved.current = false
     const st = getState()
     const box = contentBounds(st.project)
     const axis = (worldBox.minX + worldBox.maxX) / 2
@@ -218,10 +242,34 @@ export function Canvas({ assetUrls }: { assetUrls: Record<string, string> }) {
       st.side === 'bottom'
         ? { ...box, minX: 2 * axis - box.maxX, maxX: 2 * axis - box.minX }
         : box
-    set({ camera: fitBox(framed, size.w, size.h) })
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- content and side
-    // are read live on purpose: an edit must never re-frame the canvas.
-  }, [size, loadSeq, worldBox])
+    // fitBox's default margin is a fixed 70px, which is a sane frame on a
+    // desktop window and a third of the width of a phone in portrait. A
+    // narrow viewport has none to spare, and FIT_FILL already keeps the
+    // build off the edges proportionally.
+    set({ camera: fitBox(framed, size.w, size.h, mobile ? 14 : undefined) })
+  }, [size, worldBox, mobile])
+
+  useEffect(() => {
+    if (size.w < 50) return
+    const reload = fittedSeq.current !== loadSeq
+    if (!reload && cameraMoved.current) return
+    fittedSeq.current = loadSeq
+    cameraMoved.current = false
+    applyFit()
+  }, [size, loadSeq, worldBox, applyFit])
+
+  /**
+   * An explicit "fit" from the UI (`requestFit()`), which is the only way back
+   * on a touch device once you have panned off into empty paper. It hands the
+   * framing back to the app until the user moves the camera again.
+   */
+  const fittedFitSeq = useRef(s.fitSeq)
+  useEffect(() => {
+    if (fittedFitSeq.current === s.fitSeq) return
+    fittedFitSeq.current = s.fitSeq
+    cameraMoved.current = false
+    applyFit()
+  }, [s.fitSeq, applyFit])
 
   // Wheel must be non-passive or the browser page-zooms on trackpad pinch.
   useEffect(() => {
@@ -366,6 +414,182 @@ export function Canvas({ assetUrls }: { assetUrls: Record<string, string> }) {
       },
     [project, netlist],
   )
+
+  // ---- mobile: view-only touch gestures -----------------------------------
+
+  /**
+   * What a tap selects. Parts win, then wires (with a finger-sized pick
+   * radius), then the board under the finger — the same precedence a desktop
+   * click has, minus the drag that would follow it.
+   */
+  const tapAt = useCallback(
+    (screen: Vec) => {
+      const w = screenToWorld(view, screen)
+      const pid = partUnder(w)
+      if (pid) {
+        set({ selection: { parts: [pid], wires: [], boards: [] }, hoverNet: null })
+        return
+      }
+      // Measured in screen px so the target stays finger-sized at every zoom.
+      const tol = TAP_PICK_PX / (camera.zoom * PITCH_PX)
+      let best: { d: number; id: string } | null = null
+      for (const wire of project.wires) {
+        if (wire.side !== side || hidden.wires.has(wire.id)) continue
+        const pts = wirePoints(wire, pinAt)
+        for (let i = 0; i < pts.length - 1; i++) {
+          const d = distToSegment(w, pts[i], pts[i + 1])
+          if (d <= tol && (!best || d < best.d)) best = { d, id: wire.id }
+        }
+      }
+      if (best) {
+        set({
+          selection: { parts: [], wires: [best.id], boards: [] },
+          hoverNet: netlist.byWire.get(best.id) ?? null,
+        })
+        return
+      }
+      const board = boardAt(project, Math.round(w.x), Math.round(w.y))
+      if (board) selectOne('boards', board.id, false)
+      else set({ selection: EMPTY_SELECTION, hoverNet: null })
+    },
+    [view, camera.zoom, project, side, hidden, partUnder, pinAt, netlist],
+  )
+  const tapRef = useRef(tapAt)
+  useEffect(() => {
+    tapRef.current = tapAt
+  }, [tapAt])
+
+  /**
+   * One finger pans, two pinch-zoom, a tap selects. Nothing here edits the
+   * document — on a touch device this is a viewer.
+   *
+   * The listeners are native and registered in the CAPTURE phase on purpose:
+   * parts and wires call `stopPropagation` on pointerdown, so a bubbling
+   * listener would lose the second finger of a pinch that happened to start on
+   * a component. The React handlers all stand down while `mobile` is set, so
+   * this is the only thing reading the pointer stream.
+   */
+  useEffect(() => {
+    if (!mobile) return
+    const el = svgRef.current
+    if (!el) return
+
+    const pts = new Map<number, Vec>()
+    let mode: 'none' | 'pan' | 'pinch' = 'none'
+    /** Screen position the pan last saw, so each frame applies a delta. */
+    let last: Vec = { x: 0, y: 0 }
+    let pinchDist = 0
+    let pinchMid: Vec = { x: 0, y: 0 }
+    let downAt: Vec | null = null
+    let downTime = 0
+    let moved = false
+
+    const local = (p: Vec): Vec => {
+      const r = el.getBoundingClientRect()
+      return { x: p.x - r.left, y: p.y - r.top }
+    }
+    const two = (): [Vec, Vec] => {
+      const [a, b] = [...pts.values()]
+      return [a, b]
+    }
+
+    const onDown = (e: PointerEvent) => {
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY })
+      try {
+        el.setPointerCapture(e.pointerId)
+      } catch {
+        // Some pointer types refuse capture; bubbling still delivers the moves.
+      }
+      if (pts.size === 1) {
+        mode = 'pan'
+        last = { x: e.clientX, y: e.clientY }
+        downAt = { ...last }
+        downTime = performance.now()
+        moved = false
+      } else if (pts.size === 2) {
+        mode = 'pinch'
+        const [a, b] = two()
+        pinchDist = Math.hypot(a.x - b.x, a.y - b.y)
+        pinchMid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }
+        // A second finger is never part of a tap.
+        moved = true
+      }
+    }
+
+    const onMove = (e: PointerEvent) => {
+      if (!pts.has(e.pointerId)) return
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY })
+
+      if (mode === 'pinch' && pts.size >= 2) {
+        const [a, b] = two()
+        const dist = Math.hypot(a.x - b.x, a.y - b.y)
+        const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }
+        if (pinchDist > 0) {
+          cameraMoved.current = true
+          // Zoom about the midpoint, then follow the midpoint's own travel, so
+          // a pinch that also slides pans at the same time.
+          const zoomed = zoomAt(getState().camera, local(pinchMid), dist / pinchDist)
+          set({
+            camera: {
+              ...zoomed,
+              x: zoomed.x + (mid.x - pinchMid.x),
+              y: zoomed.y + (mid.y - pinchMid.y),
+            },
+          })
+        }
+        pinchDist = dist
+        pinchMid = mid
+        return
+      }
+
+      if (mode === 'pan') {
+        if (downAt && Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) > TAP_SLOP_PX) {
+          moved = true
+        }
+        const dx = e.clientX - last.x
+        const dy = e.clientY - last.y
+        last = { x: e.clientX, y: e.clientY }
+        if (!moved) return
+        cameraMoved.current = true
+        const cam = getState().camera
+        set({ camera: { ...cam, x: cam.x + dx, y: cam.y + dy } })
+      }
+    }
+
+    const onUp = (e: PointerEvent) => {
+      if (!pts.delete(e.pointerId)) return
+      try {
+        el.releasePointerCapture(e.pointerId)
+      } catch {
+        // already released
+      }
+      if (pts.size === 1) {
+        // A pinch that lost a finger keeps panning with the one still down.
+        mode = 'pan'
+        const [p] = [...pts.values()]
+        last = { ...p }
+        return
+      }
+      if (pts.size > 1) return
+      if (mode === 'pan' && !moved && downAt && performance.now() - downTime < TAP_MS) {
+        tapRef.current(local(downAt))
+      }
+      mode = 'none'
+      downAt = null
+    }
+
+    const opts = { capture: true }
+    el.addEventListener('pointerdown', onDown, opts)
+    el.addEventListener('pointermove', onMove, opts)
+    el.addEventListener('pointerup', onUp, opts)
+    el.addEventListener('pointercancel', onUp, opts)
+    return () => {
+      el.removeEventListener('pointerdown', onDown, opts)
+      el.removeEventListener('pointermove', onMove, opts)
+      el.removeEventListener('pointerup', onUp, opts)
+      el.removeEventListener('pointercancel', onUp, opts)
+    }
+  }, [mobile])
 
   // ---- keyboard -----------------------------------------------------------
   useEffect(() => {
@@ -540,6 +764,7 @@ export function Canvas({ assetUrls }: { assetUrls: Record<string, string> }) {
   }
 
   function onBackgroundPointerDown(e: React.PointerEvent) {
+    if (mobile) return
     const w = toWorld(e)
     if (tryPan(e)) return
     if (tool === 'wire' && e.button === 0) {
@@ -597,6 +822,7 @@ export function Canvas({ assetUrls }: { assetUrls: Record<string, string> }) {
   }
 
   function onPointerMove(e: React.PointerEvent) {
+    if (mobile) return
     const w = toWorld(e)
     setCursorWorld(w)
 
@@ -733,6 +959,7 @@ export function Canvas({ assetUrls }: { assetUrls: Record<string, string> }) {
   }
 
   function onPointerUp(e: React.PointerEvent) {
+    if (mobile) return
     if (e.type === 'pointerleave') {
       setHoverPin(null)
       setCursorWorld(null)
@@ -927,6 +1154,7 @@ export function Canvas({ assetUrls }: { assetUrls: Record<string, string> }) {
                 assetUrls={assetUrls}
                 dragging={draggedIds?.has(inst.id)}
                 onPointerDown={(e) => {
+                  if (mobile) return
                   if (tryPan(e)) {
                     e.stopPropagation()
                     return
@@ -958,6 +1186,7 @@ export function Canvas({ assetUrls }: { assetUrls: Record<string, string> }) {
               highlightNet={hoverNet}
               pxScale={1 / (camera.zoom * PITCH_PX)}
               onSegmentDown={(index, e) => {
+                if (mobile) return
                 if (tryPan(e)) return
                 if (tool !== 'select' || e.button !== 0) return
                 const at = toWorld(e)
@@ -988,6 +1217,7 @@ export function Canvas({ assetUrls }: { assetUrls: Record<string, string> }) {
                 })
               }}
               onWaypointDown={(index, e) => {
+                if (mobile) return
                 if (tryPan(e)) return
                 if (doubleClicked(`wp:${w.id}:${index}`)) {
                   commit((p) =>
@@ -1000,6 +1230,7 @@ export function Canvas({ assetUrls }: { assetUrls: Record<string, string> }) {
                 setDrag({ kind: 'waypoint', wireId: w.id, index, moved: false })
               }}
               onEndpointDown={(end, e) => {
+                if (mobile) return
                 if (tryPan(e)) return
                 capture(e)
                 setDrag({ kind: 'endpoint', wireId: w.id, end, moved: false })
@@ -1060,14 +1291,16 @@ export function Canvas({ assetUrls }: { assetUrls: Record<string, string> }) {
           />
         )}
       </g>
-      <Ruler
-        size={size}
-        thickness={RULER_PX}
-        pxPerMm={pxPerMm}
-        originX={rulerOrigin.x}
-        originY={rulerOrigin.y}
-        cursorScreen={cursorScreen}
-      />
+      {!mobile && (
+        <Ruler
+          size={size}
+          thickness={RULER_PX}
+          pxPerMm={pxPerMm}
+          originX={rulerOrigin.x}
+          originY={rulerOrigin.y}
+          cursorScreen={cursorScreen}
+        />
+      )}
     </svg>
     {hoverPin && (
       <div

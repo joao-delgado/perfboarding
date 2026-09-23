@@ -72,7 +72,7 @@ if you need to go deeper on one specific point.
 
 ## Current status
 
-**Phases 1, 2, 3, 4 and 6 are done. The app runs.**
+**Phases 1, 2, 3, 4 and 6 are done. The app runs, on desktop and on touch.**
 
 - Toolchain: Vite 8 + React 19 + TypeScript 6, oxlint. `npm run build` is green.
 - Model layer complete: `types`, `geometry`, `nets`, `project`, `store`.
@@ -100,6 +100,11 @@ if you need to go deeper on one specific point.
   decisions); a user protects in-progress work by saving and reopening a file.
 - Part editor modal works: pen tool on the half-hole grid, pin placement and
   naming, image upload with SVG sanitising, clip-to-outline texturing.
+- **Touch devices get a view-only layout** (`ui/useMobile.ts`): one-finger pan,
+  two-finger pinch zoom, tap to select. No toolbar but Top/Bottom, ghost far
+  side, Fit and the drawer button; no status bar, no ruler, no Library, no
+  Boards panel, and Properties drops every control that edits. The sidebar
+  becomes a right-hand drawer that starts **closed**.
 
 Verified by driving headless Chrome over CDP — 22 checks covering wire drawing,
 the minimum-drag guard, bend add/remove, segment drag, endpoint re-binding, the
@@ -132,6 +137,7 @@ These were answered directly by the user. Do not reopen them without being asked
 | Double-click detection | Recognised **by hand** in `Canvas.tsx` (`doubleClicked`), not with `onDoubleClick` | `setPointerCapture` retargets the browser's compatibility mouse events, so the native dblclick lands on the `<svg>` instead of the bend you aimed at. See Gotchas |
 | Hiding a component | The Components panel's eye toggle sets `hidden` on the **PartInstance** (so it saves with the project and undoes like any edit), and hides the wiring attached to that part as well. It is view-only: `computeNets` never reads it, and a hidden part still occupies its holes | You hide a component to see what is underneath it, not to remove it. Letting it drop out of the netlist would make "hidden" silently mean "deleted", and a drop onto its holes would then succeed and produce a physically impossible board |
 | Seed parts | **Passives & basics**: resistor, capacitor (radial + ceramic), LED, diode, tactile switch, slide switch, 2-pin screw terminal, pin header (configurable length) | The user declined the ESP32/TP4056 module set and the parametric DIP/SIP set |
+| Mobile | A touch device gets a **view-only** layout, chosen by INPUT (`pointer: coarse`) and not by width | Editing by touch was never actually possible — one-finger drag meant marquee and there was no pinch-zoom at all — so a tablet in landscape is better served by the viewer than by an editor it cannot drive. Keying off width instead would flip a narrow desktop window into view-only mid-edit. The canvas is the deliverable on a phone: you hold the board in one hand and the plan in the other |
 | Session persistence | **No autosave, no IndexedDB session restore.** Every launch fetches `public/tiny-cam.perfproj` fresh, unconditionally. A user who wants to keep in-progress work saves a `.perfproj` and reopens it later | Autosave-then-restore meant the live GitHub Pages demo silently pinned every returning visitor to whatever `tiny-cam.perfproj` looked like on their first visit, even after the file was updated and redeployed — a stale demo forever, per browser. The user explicitly chose "always show the current file; Save/Open is how you protect work" over continuity-across-reloads |
 
 ---
@@ -348,6 +354,7 @@ src/
     ComponentsPanel.tsx ✅ "Components": every PLACED part, with an eye toggle
     PartThumb.tsx  ✅ a def drawn to fit a box, shared by both of those
     Inspector.tsx  ✅ selected-object properties, including part side and net name
+    useMobile.ts   ✅ `useIsMobile()` — the one place the touch/desktop split is decided
     PartEditor.tsx ✅ full-screen modal: pen tool, pins, texture
   io/
     assets.ts      ✅ content-addressed in-memory asset store
@@ -544,6 +551,10 @@ Legend: `[x]` done · `[ ]` not started · `[~]` partial
       a per-row eye that hides the part and its wiring from the canvas
 - [x] Sidebar reordered/relabelled: Properties (renamed from Inspector),
       Components, Library, Boards
+- [x] **Mobile / touch: a view-only layout.** `useIsMobile()` gates it; every
+      piece is listed under Current status. Canvas gestures are a separate
+      capture-phase pointer layer in `Canvas.tsx`, the sidebar is a drawer
+      that starts closed, and `requestFit()` (store) drives the Fit button
 - [ ] Copy/paste/duplicate
 - [ ] Cursor-as-affordance
 - [ ] Colour-wires-by-length toggle
@@ -780,6 +791,46 @@ DOMPurify 3 ships its own types — do not add `@types/dompurify`.
   had `(V)`/`(W)` in its button titles for a while before these were actually
   wired up; if new tools are added, extend this block rather than adding a
   second key handler.
+- **`useIsMobile()` (`ui/useMobile.ts`) is the ONLY place the touch/desktop
+  split is decided.** It matches `(pointer: coarse), (max-width: 600px)` — the
+  input, not the width, so a narrow desktop window keeps the full editor (see
+  Locked decisions, Mobile). Components that need it call the hook themselves
+  (`Inspector`, `ComponentsPanel`); `App` passes it down to `Canvas` and
+  `Toolbar` as a `mobile` prop. Do not add a second, differently-worded media
+  query — CSS gates off the `.app.is-mobile` class this hook sets, never off a
+  raw `@media` breakpoint, so the two can never disagree.
+- **On mobile the canvas's React pointer handlers all stand down** and a
+  native, **capture-phase** listener set owns the pointer stream instead
+  (`Canvas.tsx`, the effect keyed on `mobile`). Capture phase is load-bearing:
+  parts and wires `stopPropagation` on pointerdown, so a bubbling listener
+  would lose the second finger of a pinch that happened to start on a
+  component. Each editing handler therefore begins with `if (mobile) return` —
+  miss one and that gesture edits the document on a device with no visible
+  undo. One finger pans, two pinch (zoom about the midpoint, then follow the
+  midpoint's own travel so a pinch-and-slide does both), a press that stays
+  inside `TAP_SLOP_PX` for under `TAP_MS` is a tap and selects.
+- **`fitBox`'s 70px margin is a desktop number.** It is a third of the width of
+  a phone in portrait, and framing a build with it opened the demo at ~0.16
+  zoom — a postage stamp in an ocean of paper. `applyFit` passes 14 on mobile.
+  `FIT_FILL` is the part of the margin that is supposed to scale with the
+  window; the fixed px is only there to keep content off the very edge.
+- **`requestFit()` / `fitSeq` is how anything outside the canvas re-frames it.**
+  The camera fit used to be reachable only from `loadSeq`; the mobile Fit
+  button needed it on demand, so `applyFit` was pulled out of that effect and a
+  second effect watches `fitSeq`. `applyFit` reads project and side LIVE via
+  `getState()` — that is what stops an edit from re-framing the canvas, so do
+  not close over them.
+- **A mobile `Section` sizes to content (`autoHeight`) or grows (`grow`), never
+  to its stored pixel height.** In the drawer there are only two sections, so a
+  fixed 260px Properties showing "Nothing selected" sat above a Components list
+  clipped to 200px with half the drawer blank underneath. `Inspector` passes
+  `autoHeight={mobile}`, `ComponentsPanel` passes `grow={mobile}`. `autoHeight`
+  also drops the resize handle, which on touch only competes with scrolling.
+- **The mobile Properties panel is read-only on purpose**, down to the Delete
+  button — `Inspector.tsx` swaps each editing control for a `<ReadOnly>` row or
+  omits it. A view-only app has no visible undo, so a thumb landing on Delete
+  would be unanswerable. If you add a field to the Inspector, give it a mobile
+  branch or it will be an edit control on a device that is not meant to edit.
 - **Wire colour swatches in the toolbar are conditionally rendered**, not
   just hidden — `Toolbar.tsx` shows the swatch group when `tool === 'wire'`
   (picking the colour for the next wire you draw) **or** a wire is selected

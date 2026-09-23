@@ -1049,3 +1049,115 @@ body,
 .info-tip:focus-within .info-tip-pop {
   display: block;
 }
+
+/* ===========================================================================
+   Mobile: a view-only layout.
+
+   Everything that edits the document is gone from the chrome, the canvas gets
+   the whole screen, and the sidebar becomes a drawer that starts closed.
+   Gated on `.app.is-mobile`, which `useMobile.ts` decides — NOT on a bare
+   media query, so a narrow desktop window keeps its editing UI.
+   =========================================================================== */
+
+/* Let the canvas own every touch: no page scroll, no rubber-band, no
+   double-tap zoom stealing a tap meant for a part. */
+html,
+body {
+  overscroll-behavior: none;
+  -webkit-text-size-adjust: 100%;
+}
+
+.canvas-host svg,
+.canvas-host svg * {
+  touch-action: none;
+}
+
+.app.is-mobile {
+  font-size: 12px;
+}
+
+.body {
+  /* Anchor for the mobile drawer and its scrim. */
+  position: relative;
+}
+
+.toolbar .spacer {
+  flex: 1;
+}
+
+.toolbar.mobile {
+  gap: 6px;
+  padding: 5px 8px;
+  padding-top: calc(5px + env(safe-area-inset-top));
+  flex-wrap: nowrap;
+}
+
+/* Touch targets: 15px icons in a box you can actually hit with a thumb. */
+.is-mobile .btn.icon {
+  width: 34px;
+  height: 34px;
+}
+
+.is-mobile .switch-btn {
+  padding: 6px 13px;
+}
+
+/* --- the drawer ---------------------------------------------------------- */
+
+.side.drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 30;
+  width: min(320px, 86vw);
+  border-left: 1px solid var(--line);
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.16);
+  padding-bottom: env(safe-area-inset-bottom);
+  transition: transform 0.18s ease;
+  transform: translateX(0);
+}
+
+.side.drawer.closed {
+  transform: translateX(100%);
+  /* Off-screen but still in the DOM, so it must not eat edge swipes. */
+  pointer-events: none;
+  box-shadow: none;
+}
+
+.side-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 29;
+  background: rgba(30, 28, 25, 0.28);
+}
+
+/* Dragging a section's bottom edge to resize it competes with scrolling the
+   drawer, and there is no hover to advertise it. */
+.is-mobile .section-resize {
+  display: none;
+}
+
+.is-mobile .panel-head {
+  min-height: 34px;
+}
+
+.is-mobile .comp-row {
+  padding: 6px 5px;
+  font-size: 12.5px;
+}
+
+.is-mobile .comp-eye {
+  width: 30px;
+  height: 28px;
+}
+
+.is-mobile .btn.small {
+  padding: 5px 10px;
+}
+
+/* A Properties value with no control behind it — the mobile read-only rows. */
+.inspector-body .ro {
+  padding: 2px 0 1px;
+  font-variant-numeric: tabular-nums;
+}

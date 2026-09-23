@@ -43,9 +43,21 @@ interface SectionProps {
   defaultHeight?: number
   /** The one section that fills remaining space instead of taking a fixed height. */
   grow?: boolean
+  /** Size to content instead of to a stored pixel height, and drop the resize
+   *  handle with it. Used by the mobile drawer, where a fixed height would
+   *  leave a section like an empty Properties panel holding 260px of nothing. */
+  autoHeight?: boolean
 }
 
-export function Section({ id, title, headerExtra, children, defaultHeight = 220, grow }: SectionProps) {
+export function Section({
+  id,
+  title,
+  headerExtra,
+  children,
+  defaultHeight = 220,
+  grow,
+  autoHeight,
+}: SectionProps) {
   const [layout, setLayout] = useState<Layout>(() => loadLayout()[id] ?? {})
   const resizing = useRef<{ startY: number; startHeight: number } | null>(null)
   const collapsed = !!layout.collapsed
@@ -65,7 +77,7 @@ export function Section({ id, title, headerExtra, children, defaultHeight = 220,
   )
 
   useEffect(() => {
-    if (grow) return
+    if (grow || autoHeight) return
     function onMove(e: PointerEvent) {
       if (!resizing.current) return
       const next = Math.max(MIN_HEIGHT, resizing.current.startHeight + (e.clientY - resizing.current.startY))
@@ -80,12 +92,12 @@ export function Section({ id, title, headerExtra, children, defaultHeight = 220,
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
     }
-  }, [grow, patch])
+  }, [grow, autoHeight, patch])
 
   return (
     <div
-      className={`panel section ${grow && !collapsed ? 'grow' : ''}`}
-      style={!collapsed && !grow ? { height, flex: 'none' } : undefined}
+      className={`panel section ${grow && !collapsed ? 'grow' : ''}${autoHeight ? ' auto' : ''}`}
+      style={!collapsed && !grow && !autoHeight ? { height, flex: 'none' } : undefined}
     >
       <div className="panel-head">
         <span className="section-title" onClick={() => patch({ collapsed: !collapsed })}>
@@ -95,7 +107,7 @@ export function Section({ id, title, headerExtra, children, defaultHeight = 220,
         {headerExtra}
       </div>
       {!collapsed && <div className="section-body">{children}</div>}
-      {!collapsed && !grow && (
+      {!collapsed && !grow && !autoHeight && (
         <div
           className="section-resize"
           onPointerDown={(e) => {

@@ -69,6 +69,8 @@ export function fitBox(
   box: { minX: number; minY: number; maxX: number; maxY: number },
   w: number,
   h: number,
+  /** Fixed px held back on every side. Small viewports pass a smaller one —
+   *  70px is a third of the width of a phone in portrait. */
   margin = 70,
 ): Camera {
   const bw = Math.max(1, box.maxX - box.minX)

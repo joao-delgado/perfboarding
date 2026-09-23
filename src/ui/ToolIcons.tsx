@@ -111,3 +111,41 @@ export function EyeOffIcon({ size = 15 }: IconProps) {
     </>,
   )
 }
+
+/** Right-hand sidebar, for the mobile drawer toggle. */
+export function PanelIcon({ size = 15 }: IconProps) {
+  return box(
+    size,
+    <>
+      <rect x={1.2} y={2.2} width={12.6} height={10.6} rx={1.6} fill="none" stroke="currentColor" strokeWidth={1.2} />
+      <path d="M9.2 2.2 L9.2 12.8" stroke="currentColor" strokeWidth={1.2} />
+      <path d="M11 5.4 H12.3 M11 7.5 H12.3 M11 9.6 H12.3" stroke="currentColor" strokeWidth={1.1} strokeLinecap="round" />
+    </>,
+  )
+}
+
+export function CloseIcon({ size = 15 }: IconProps) {
+  return box(
+    size,
+    <path
+      d="M3.4 3.4 L11.6 11.6 M11.6 3.4 L3.4 11.6"
+      stroke="currentColor"
+      strokeWidth={1.5}
+      strokeLinecap="round"
+    />,
+  )
+}
+
+/** Arrows pointing into the corners: re-frame the whole build. */
+export function FitIcon({ size = 15 }: IconProps) {
+  return box(
+    size,
+    <g stroke="currentColor" strokeWidth={1.2} strokeLinecap="round" strokeLinejoin="round" fill="none">
+      <path d="M1.6 5 V1.6 H5" />
+      <path d="M10 1.6 H13.4 V5" />
+      <path d="M13.4 10 V13.4 H10" />
+      <path d="M5 13.4 H1.6 V10" />
+      <rect x={4.8} y={4.8} width={5.4} height={5.4} rx={0.8} />
+    </g>,
+  )
+}

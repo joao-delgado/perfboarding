@@ -5,6 +5,7 @@ import { hiddenIds, pruneSelection } from '../model/visibility'
 import { PartThumb } from './PartThumb'
 import { EyeIcon, EyeOffIcon } from './ToolIcons'
 import { Section } from './Section'
+import { useIsMobile } from './useMobile'
 
 /**
  * Every component actually placed on the canvas, with an eye toggle per row.
@@ -15,6 +16,7 @@ import { Section } from './Section'
  * hole occupancy and the rest of the document are untouched.
  */
 export function ComponentsPanel({ assetUrls }: { assetUrls: Record<string, string> }) {
+  const mobile = useIsMobile()
   const s = useEditor()
   const { parts, defs } = s.project
   const hidden = useMemo(() => hiddenIds(s.project), [s.project])
@@ -35,6 +37,9 @@ export function ComponentsPanel({ assetUrls }: { assetUrls: Record<string, strin
       id="components"
       title="Components"
       defaultHeight={200}
+      // In the mobile drawer this is the only list, so it takes the height the
+      // Library and Boards sections are not there to use.
+      grow={mobile}
       headerExtra={
         anyHidden ? (
           <button

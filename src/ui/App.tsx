@@ -15,6 +15,7 @@ import { ComponentsPanel } from './ComponentsPanel'
 import { BoardsPanel } from './BoardsPanel'
 import { Inspector } from './Inspector'
 import { Toolbar } from './Toolbar'
+import { useIsMobile } from './useMobile'
 
 /**
  * Bring an older document up to date: a single `board` before multi-board
@@ -48,6 +49,10 @@ async function loadDefaultProject(): Promise<Project | undefined> {
 
 export default function App() {
   const s = useEditor()
+  const mobile = useIsMobile()
+  /** The mobile side drawer. Closed on purpose: the canvas is the point, and
+   *  the panel is an overlay you pull out to inspect something. */
+  const [panelOpen, setPanelOpen] = useState(false)
   const [ready, setReady] = useState(false)
   const [status, setStatus] = useState<string>('')
   const [editing, setEditing] = useState<{ defId?: string } | null>(null)
@@ -165,20 +170,29 @@ export default function App() {
   if (!ready) return <div className="boot">Loading…</div>
 
   return (
-    <div className="app">
+    <div className={`app${mobile ? ' is-mobile' : ''}`}>
       <Toolbar
         onSave={() => void onSave()}
         onSaveAs={() => void onSaveAs()}
         onOpen={() => void onOpen()}
         onNew={onNew}
+        mobile={mobile}
+        panelOpen={panelOpen}
+        onTogglePanel={() => setPanelOpen((v) => !v)}
       />
       <div className="body">
         <div className="canvas-host">
-          <Canvas assetUrls={assetUrls} />
+          <Canvas assetUrls={assetUrls} mobile={mobile} />
         </div>
-        <aside className="side">
+        {mobile && panelOpen && (
+          <div className="side-scrim" onClick={() => setPanelOpen(false)} />
+        )}
+        <aside className={`side${mobile ? ' drawer' : ''}${mobile && !panelOpen ? ' closed' : ''}`}>
           <Inspector netlist={netlist} />
           <ComponentsPanel assetUrls={assetUrls} />
+          {/* The library and the board settings only exist to CHANGE the
+              document, so they have no place in the view-only layout. */}
+          {!mobile && (
           <PartsPanel
             defs={defs}
             assetUrls={assetUrls}
@@ -193,7 +207,8 @@ export default function App() {
               setStatus(`Deleted part "${def?.name ?? id}"`)
             }}
           />
-          <BoardsPanel />
+          )}
+          {!mobile && <BoardsPanel />}
         </aside>
       </div>
       {editing && (
@@ -211,6 +226,7 @@ export default function App() {
           }}
         />
       )}
+      {!mobile && (
       <div className="status">
         <span>
           {s.tool === 'wire'
@@ -224,6 +240,7 @@ export default function App() {
         </span>
         <span className="msg">{status}</span>
       </div>
+      )}
     </div>
   )
 }

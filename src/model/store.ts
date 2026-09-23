@@ -59,6 +59,9 @@ export interface EditorState {
   /** Bumped by every `load()`. The canvas re-fits the camera whenever it
    *  changes, so opening a document always frames the whole build. */
   loadSeq: number
+  /** Bumped by `requestFit()`. Re-frames the whole build on demand — the
+   *  mobile toolbar's only way back after panning off into empty paper. */
+  fitSeq: number
 }
 
 const initial: EditorState = {
@@ -77,6 +80,7 @@ const initial: EditorState = {
   dragDefId: null,
   dirty: false,
   loadSeq: 0,
+  fitSeq: 0,
 }
 
 const UNDO_LIMIT = 100
@@ -101,6 +105,11 @@ export function getState(): EditorState {
 export function set(patch: Partial<EditorState>): void {
   state = { ...state, ...patch }
   emit()
+}
+
+/** Ask the canvas to re-frame the whole build. View state, not a document edit. */
+export function requestFit(): void {
+  set({ fitSeq: state.fitSeq + 1 })
 }
 
 /**

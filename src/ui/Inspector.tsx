@@ -16,6 +16,7 @@ import {
 import { commit, EMPTY_SELECTION, set, useEditor, WIRE_COLORS } from '../model/store'
 import type { PartInstance, Side, Wire } from '../model/types'
 import { Section } from './Section'
+import { useIsMobile } from './useMobile'
 
 /** On-board footprint size in mm, accounting for a 90/270 rotation swapping width and height. */
 function footprintMm(defBounds: { minX: number; minY: number; maxX: number; maxY: number }, rotation: PartInstance['rotation']) {
@@ -37,6 +38,20 @@ function SideButtons({ value, onPick }: { value: Side | 'mixed'; onPick: (s: Sid
           {sd === 'top' ? 'Top' : 'Bottom'}
         </button>
       ))}
+    </div>
+  )
+}
+
+/**
+ * A value the mobile layout shows instead of the control that edits it. The
+ * canvas is view-only on a touch device, so the Properties panel is too —
+ * an accidental thumb on "Delete" there has no visible undo to answer it.
+ */
+function ReadOnly({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="field">
+      <span>{label}</span>
+      <div className="ro">{children}</div>
     </div>
   )
 }
@@ -64,6 +79,7 @@ function OrderButtons({ onPick }: { onPick: (s: Stacking) => void }) {
 /** Properties of whatever is selected. Single place to change side, which is
  *  otherwise fixed at drop time. */
 export function Inspector({ netlist }: { netlist: Netlist }) {
+  const mobile = useIsMobile()
   const s = useEditor()
   const { project, selection } = s
 
@@ -91,8 +107,12 @@ export function Inspector({ netlist }: { netlist: Netlist }) {
       id="inspector"
       title="Properties"
       defaultHeight={260}
+      // In the mobile drawer a fixed height leaves an empty Properties panel
+      // holding 260px of nothing above the component list.
+      autoHeight={mobile}
       headerExtra={
-        !nothing && (
+        !nothing &&
+        !mobile && (
           <button
             className="btn small"
             onClick={() => {
@@ -127,7 +147,9 @@ export function Inspector({ netlist }: { netlist: Netlist }) {
                 )
               })()}
 
-            {one && (
+            {one && mobile && <ReadOnly label="Designator">{one.ref || '—'}</ReadOnly>}
+
+            {one && !mobile && (
               <label className="field">
                 <span>Designator</span>
                 <input
@@ -141,7 +163,13 @@ export function Inspector({ netlist }: { netlist: Netlist }) {
               </label>
             )}
 
-            {one && (
+            {one && mobile && (
+              <ReadOnly label="Hole">
+                ({one.x}, {one.y})
+              </ReadOnly>
+            )}
+
+            {one && !mobile && (
               <div className="field row">
                 <label>
                   <span>Hole X</span>
@@ -168,6 +196,9 @@ export function Inspector({ netlist }: { netlist: Netlist }) {
               </div>
             )}
 
+            {mobile ? (
+              one && <ReadOnly label="Rotation">{one.rotation}°</ReadOnly>
+            ) : (
             <div className="field">
               <span>Rotation{one ? ` — ${one.rotation}°` : ''}</span>
               <div className="group">
@@ -187,25 +218,34 @@ export function Inspector({ netlist }: { netlist: Netlist }) {
                 </button>
               </div>
             </div>
+            )}
 
-            <div className="field">
-              <span>Mounted on</span>
-              <SideButtons
-                value={partSide}
-                onPick={(sd) => commit((p) => parts.reduce((acc, i) => setPartSide(acc, i.id, sd), p))}
-              />
-              <div className="note">
-                Flipping mirrors the part — it keeps its footprint, but the pins swap ends.
-              </div>
-            </div>
+            {mobile ? (
+              <ReadOnly label="Mounted on">{partSide === 'mixed' ? 'mixed' : partSide}</ReadOnly>
+            ) : (
+              <>
+                <div className="field">
+                  <span>Mounted on</span>
+                  <SideButtons
+                    value={partSide}
+                    onPick={(sd) =>
+                      commit((p) => parts.reduce((acc, i) => setPartSide(acc, i.id, sd), p))
+                    }
+                  />
+                  <div className="note">
+                    Flipping mirrors the part — it keeps its footprint, but the pins swap ends.
+                  </div>
+                </div>
 
-            <div className="field">
-              <span>Order</span>
-              <OrderButtons
-                onPick={(s) => commit((p) => reorderPartsAndWires(p, selection.parts, s))}
-              />
-              <div className="note">Wires connected to this part move with it.</div>
-            </div>
+                <div className="field">
+                  <span>Order</span>
+                  <OrderButtons
+                    onPick={(s) => commit((p) => reorderPartsAndWires(p, selection.parts, s))}
+                  />
+                  <div className="note">Wires connected to this part move with it.</div>
+                </div>
+              </>
+            )}
           </>
         )}
 
@@ -213,6 +253,7 @@ export function Inspector({ netlist }: { netlist: Netlist }) {
           <>
             <div className="insp-title">{oneWire ? 'Wire' : `${wires.length} wires`}</div>
 
+            {!mobile && (
             <div className="field">
               <span>Colour</span>
               <div className="swatches">
@@ -230,7 +271,9 @@ export function Inspector({ netlist }: { netlist: Netlist }) {
                 ))}
               </div>
             </div>
+            )}
 
+            {!mobile && (
             <label className="check">
               <input
                 type="checkbox"
@@ -243,22 +286,36 @@ export function Inspector({ netlist }: { netlist: Netlist }) {
               />
               banded
             </label>
+            )}
 
-            <div className="field">
-              <span>Side</span>
-              <SideButtons
-                value={wireSide}
-                onPick={(sd) =>
-                  commit((p) => wires.reduce((acc, w) => updateWire(acc, w.id, { side: sd }), p))
-                }
-              />
-            </div>
+            {mobile ? (
+              <ReadOnly label="Side">{wireSide === 'mixed' ? 'mixed' : wireSide}</ReadOnly>
+            ) : (
+              <>
+                <div className="field">
+                  <span>Side</span>
+                  <SideButtons
+                    value={wireSide}
+                    onPick={(sd) =>
+                      commit((p) => wires.reduce((acc, w) => updateWire(acc, w.id, { side: sd }), p))
+                    }
+                  />
+                </div>
 
-            <div className="field">
-              <span>Order</span>
-              <OrderButtons onPick={(s) => commit((p) => reorderWires(p, selection.wires, s))} />
-            </div>
+                <div className="field">
+                  <span>Order</span>
+                  <OrderButtons onPick={(s) => commit((p) => reorderWires(p, selection.wires, s))} />
+                </div>
+              </>
+            )}
 
+            {mobile && (
+              <ReadOnly label="Net name">
+                {(oneWire ? net?.name ?? oneWire.net : undefined) ?? 'unnamed'}
+              </ReadOnly>
+            )}
+
+            {!mobile && (
             <label className="field">
               <span>Net name</span>
               <input
@@ -280,6 +337,7 @@ export function Inspector({ netlist }: { netlist: Netlist }) {
                 }}
               />
             </label>
+            )}
 
             {oneWire && (
               <div className="note">
@@ -289,7 +347,7 @@ export function Inspector({ netlist }: { netlist: Netlist }) {
               </div>
             )}
 
-            {oneWire && oneWire.waypoints.length > 0 && (
+            {!mobile && oneWire && oneWire.waypoints.length > 0 && (
               <button
                 className="btn small"
                 onClick={() => commit((p) => updateWire(p, oneWire.id, { waypoints: [] }))}
@@ -314,8 +372,9 @@ export function Inspector({ netlist }: { netlist: Netlist }) {
             </div>
             <div className="note">
               {board.cols} × {board.rows} holes at ({board.x}, {board.y})
-              {padCount(board) > 0 && ` · ${padCount(board)} edge pads`}. Size, edge pads, colours
-              and name live in the Boards panel; drag the board itself to move it.
+              {padCount(board) > 0 && ` · ${padCount(board)} edge pads`}.
+              {!mobile &&
+                ' Size, edge pads, colours and name live in the Boards panel; drag the board itself to move it.'}
             </div>
           </>
         )}
