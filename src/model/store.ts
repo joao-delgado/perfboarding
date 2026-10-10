@@ -4,6 +4,12 @@ import type { Project, Side } from './types'
 
 export type Tool = 'select' | 'wire'
 
+/**
+ * Which view is on screen. Pure view state — it never touches the document,
+ * and 3D is view-and-select only, so nothing about it can be undone.
+ */
+export type ViewMode = '2d' | '3d'
+
 export interface Camera {
   /** Screen position, in px, of board origin (hole 0,0). */
   x: number
@@ -43,6 +49,8 @@ export interface EditorState {
   /** Which face of the board we are looking at. New parts and wires land here. */
   side: Side
   tool: Tool
+  /** 2D board plan, or the solid 3D view of both sides at once. */
+  mode: ViewMode
   camera: Camera
   selection: Selection
   wireColor: string
@@ -70,6 +78,7 @@ const initial: EditorState = {
   future: [],
   side: 'top',
   tool: 'select',
+  mode: '2d',
   camera: { x: 80, y: 80, zoom: 1 },
   selection: EMPTY_SELECTION,
   wireColor: '#418DD9',

@@ -48,6 +48,7 @@ import type {
   Vec,
 } from '../model/types'
 import { uid } from '../model/ids'
+import { DEFAULT_PART_HEIGHT_MM } from '../model/solid'
 import { InfoTip } from './InfoTip'
 import { LayersPanel, type LayerItem } from './LayersPanel'
 import { PartGraphics } from './PartGraphics'
@@ -1234,6 +1235,42 @@ export function PartEditor({ initial, assets, onCancel, onSave }: Props) {
                 <span>Edge</span>
                 <input type="color" value={def.stroke} onChange={(e) => setDef({ ...def, stroke: e.target.value })} />
               </label>
+            </div>
+            <label className="field">
+              <span>
+                Height (mm)
+                <InfoTip>
+                  How tall the real component stands off the board. The 3D view extrudes the body by this
+                  much, in the body colour — so a 2mm resistor and an 11mm electrolytic read as different
+                  parts from across the board. It is the one measurement here in millimetres rather than
+                  holes, because that is how a datasheet quotes it. Nothing in the 2D plan uses it.
+                </InfoTip>
+              </span>
+              <input
+                type="number"
+                min={0.1}
+                max={100}
+                step={0.1}
+                value={def.height ?? DEFAULT_PART_HEIGHT_MM}
+                onChange={(e) => {
+                  const v = Number(e.target.value)
+                  setDef({ ...def, height: isFinite(v) && v > 0 ? v : DEFAULT_PART_HEIGHT_MM })
+                }}
+              />
+            </label>
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={!!def.undersideArtwork}
+                onChange={(e) => setDef({ ...def, undersideArtwork: e.target.checked })}
+              />
+              artwork on the underside too
+            </label>
+            <div className="hint">
+              In 3D the artwork goes on the face pointing away from the board; the face against it stays
+              plain body colour, the way a module has silkscreen on one side and bare laminate on the
+              other. Tick this for a part that really is printed both sides. You only ever see that face
+              where the part overhangs a board edge.
             </div>
 
             {mode === 'outline' && (

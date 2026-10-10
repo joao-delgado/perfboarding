@@ -72,7 +72,7 @@ if you need to go deeper on one specific point.
 
 ## Current status
 
-**Phases 1, 2, 3, 4 and 6 are done. The app runs, on desktop and on touch.**
+**Phases 1, 2, 3, 4, 6 and 9 are done. The app runs, on desktop and on touch.**
 
 - Toolchain: Vite 8 + React 19 + TypeScript 6, oxlint. `npm run build` is green.
 - Model layer complete: `types`, `geometry`, `nets`, `project`, `store`.
@@ -96,10 +96,26 @@ if you need to go deeper on one specific point.
   This is a drawing tool, and the user asked for the whole feature gone.
 - Save/open `.perfproj` (zip) work; Save overwrites the current file, Save
   as… writes a new one. **No autosave, no IndexedDB session restore** — the
-  app always opens `public/tiny-cam.perfproj` fresh on launch (see Locked
-  decisions); a user protects in-progress work by saving and reopening a file.
+  app always opens a bundled project from `public/projects/` fresh on launch
+  (see Locked decisions); a user protects in-progress work by saving and
+  reopening a file.
+- **The URL picks which bundled project opens.** The last path segment is a
+  slug: `/perfboarding/single-board` opens
+  `public/projects/single-board.perfproj`, and the bare `/perfboarding/` opens
+  `tiny-cam`. Dropping a `.perfproj` into `public/projects/` is all it takes to
+  publish one — there is no index to update.
 - Part editor modal works: pen tool on the half-hole grid, pin placement and
   naming, image upload with SVG sanitising, clip-to-outline texturing.
+- **A 3D view** (`src/three/`, Phase 9) of the whole build as solid geometry:
+  a 2D/3D toggle in the toolbar (`3` toggles it), an orbit camera, and BOTH
+  faces of the board visible at once — the thing the 2D view structurally
+  cannot do. Parts are extruded by a per-def height in mm with their 2D
+  artwork baked onto the top face; wires are 1mm tubes that hug the board and
+  drop into their holes. View **and select** only: clicking picks a part,
+  wire or board and the Properties panel edits it as always, but no geometry
+  is dragged in 3D. three.js is lazy-loaded, so the 2D bundle is unchanged.
+  The part editor carries the two 3D-only properties: **Height (mm)** and
+  **artwork on the underside too**.
 - **Touch devices get a view-only layout** (`ui/useMobile.ts`): one-finger pan,
   two-finger pinch zoom, tap to select. No toolbar but Top/Bottom, ghost far
   side, Fit and the drawer button; no status bar, no ruler, no Library, no
@@ -138,6 +154,13 @@ These were answered directly by the user. Do not reopen them without being asked
 | Hiding a component | The Components panel's eye toggle sets `hidden` on the **PartInstance** (so it saves with the project and undoes like any edit), and hides the wiring attached to that part as well. It is view-only: `computeNets` never reads it, and a hidden part still occupies its holes | You hide a component to see what is underneath it, not to remove it. Letting it drop out of the netlist would make "hidden" silently mean "deleted", and a drop onto its holes would then succeed and produce a physically impossible board |
 | Seed parts | **Passives & basics**: resistor, capacitor (radial + ceramic), LED, diode, tactile switch, slide switch, 2-pin screw terminal, pin header (configurable length) | The user declined the ESP32/TP4056 module set and the parametric DIP/SIP set |
 | Mobile | A touch device gets a **view-only** layout, chosen by INPUT (`pointer: coarse`) and not by width | Editing by touch was never actually possible — one-finger drag meant marquee and there was no pinch-zoom at all — so a tablet in landscape is better served by the viewer than by an editor it cannot drive. Keying off width instead would flip a narrow desktop window into view-only mid-edit. The canvas is the deliverable on a phone: you hold the board in one hand and the plan in the other |
+| 3D view scope | **View and select, never edit.** Orbit/pan/zoom, click to select; the sidebar still edits what you picked | Every 2D tool resolves a pointer to a hole by inverting one transform. In a perspective scene the same gesture must pick a PLANE first, and with the camera edge-on to the board there is no honest answer to which side you meant. Selection needs no plane, so it costs nothing and keeps the Properties panel useful |
+| Part height | A `height` in **millimetres** on the `PartDef`, default 5mm, edited in the part editor | It is what a datasheet quotes and what calipers measure — the one quantity in the document not in hole units, deliberately. It lives on the DEF, not the instance: a part is as tall as the part is. Built-ins carry real heights (resistor 2.4, electrolytic 11, LED 8.6…) rather than all defaulting, because a field of identical 5mm slabs tells you nothing |
+| Underside artwork | The artwork goes on the cap pointing AWAY from the board; the cap against it is plain body colour, unless the def ticks `undersideArtwork` — and when it does, it appears **mirrored** | A real module has silkscreen on one face and bare laminate on the other, so texturing both caps by default was wrong wherever a part overhangs a board edge. The mirroring is deliberate and was chosen by the user over a readable copy: turning a part over mirrors it, the same rule as flipping a part's side. Per DEF rather than per instance, because it is a fact about the component |
+| Wire in 3D | 1mm is the wire's **diameter**. It rides at its own radius above the board face and drops vertically into the hole at each bound end — but only where there IS a board, and with that terminal corner left SHARP | A drooping, draped jumper is prettier but puts the wire somewhere the 2D polyline does not say it is, and this is a plan you build from. A free endpoint has no hole to drop into and stays at height |
+| Wire crossings | Where two same-side wires cross, the one **later in `project.wires`** — i.e. painted on top in 2D — arches over the other | Equal-height tubes interpenetrate, which is ugly and a lie about a board you are going to build. Reusing paint order means the Inspector's existing Order group ("bring to front") now literally means "route this one over the others", in BOTH views, instead of needing a second concept |
+| 3D renderer | **three.js**, lazy-loaded via `React.lazy` | It is ~580KB of the bundle, more than the rest of the app; most visits never leave the board plan, so it is a separate chunk fetched the first time you open 3D. The 2D bundle is byte-for-byte what it was |
+| Project URLs | The **last path segment is a bundled project's slug** — `/single-board` opens `public/projects/single-board.perfproj`, a bare base URL opens `tiny-cam`. An unknown slug falls back to the default | Linking someone at a specific plan is the whole ask, and a path reads better than `?project=`. A slug is restricted to `[A-Za-z0-9_-]+`: it is interpolated into a fetch path, so a `..` segment would walk out of `projects/` and read any URL on the origin as a document. Falling back rather than opening an empty board keeps a stale link useful |
 | Session persistence | **No autosave, no IndexedDB session restore.** Every launch fetches `public/tiny-cam.perfproj` fresh, unconditionally. A user who wants to keep in-progress work saves a `.perfproj` and reopens it later | Autosave-then-restore meant the live GitHub Pages demo silently pinned every returning visitor to whatever `tiny-cam.perfproj` looked like on their first visit, even after the file was updated and redeployed — a stale demo forever, per browser. The user explicitly chose "always show the current file; Save/Open is how you protect work" over continuity-across-reloads |
 
 ---
@@ -290,7 +313,9 @@ We store integer hole coordinates and derive pixels at render time. That's it.
 `Project` = `{ version, name, board: {cols, rows}, defs, parts, wires, assets }`.
 
 - `PartDef` — a component *definition*: outline (half-hole-step polygon), pins
-  (integer hole coords, part-local), optional texture, colours. Embedded in the project.
+  (integer hole coords, part-local), optional texture, colours, and `height`
+  in **mm** (the 3D view's extrusion depth; the only non-hole-unit quantity in
+  the document). Embedded in the project.
 - `PartInstance` — a placement: `defId`, board `x`/`y`, `rotation`, `side`, `ref`.
 - `Wire` — `side`, `color`, `banded`, `from`/`to` anchors, `waypoints[]`, optional `net` name.
 - `Anchor` — `{kind:'hole'|'pin'|'free'}`. A pin anchor is a *binding*
@@ -336,7 +361,9 @@ src/
     types.ts       ✅ document model, no rendering concerns
     geometry.ts    ✅ rotation, part↔board transforms, snapping, ortho assist, hit-test math
     nets.ts        ✅ union-find connectivity
+    shapes.ts      ✅ sub-shape sampling, boolean union, fillets, artwork
     pads.ts        ✅ edge pad strips: layout, cell lookup, board extent
+    solid.ts       ✅ physical thicknesses in MM (part height, board, wire, pins)
     visibility.ts  ✅ which parts/wires are hidden from the canvas
     project.ts     ✅ create/mutate helpers
     store.ts       ✅ editor state, undo/redo, useSyncExternalStore
@@ -353,9 +380,15 @@ src/
     PartsPanel.tsx ✅ "Library": card GRID of part DEFINITIONS, drag to canvas
     ComponentsPanel.tsx ✅ "Components": every PLACED part, with an eye toggle
     PartThumb.tsx  ✅ a def drawn to fit a box, shared by both of those
+    PartGraphics.tsx ✅ body + texture + artwork, in PART-LOCAL coords
+    LayersPanel.tsx  ✅ the part editor's shape/artwork list
     Inspector.tsx  ✅ selected-object properties, including part side and net name
     useMobile.ts   ✅ `useIsMobile()` — the one place the touch/desktop split is decided
     PartEditor.tsx ✅ full-screen modal: pen tool, pins, texture
+  three/
+    build.ts       ✅ project -> solid geometry; owns the y-up frame
+    textures.ts    ✅ repeating canvas tiles: hole lattice, pad strip, banding
+    Scene3D.tsx    ✅ renderer, orbit camera, picking, artwork texture bake
   io/
     assets.ts      ✅ content-addressed in-memory asset store
     perfproj.ts    ✅ zip read/write
@@ -516,7 +549,11 @@ Legend: `[x]` done · `[ ]` not started · `[~]` partial
 - [x] **Autosave and IndexedDB session restore removed** (see Locked
       decisions, Session persistence) — `io/autosave.ts` deleted, `idb`
       dropped from dependencies. `App.tsx` always fetches
-      `public/tiny-cam.perfproj` fresh on launch instead
+      the URL's project from `public/projects/` fresh on launch instead
+- [x] **Bundled projects are addressed by URL path** — `urlProjectSlug` in
+      `App.tsx` reads the last path segment; `vite.config.ts`'s
+      `pagesSpaFallback` plugin copies the built `index.html` to `404.html` so
+      GitHub Pages serves the app for a deep link it has no file for
 - [ ] Drag-a-file-onto-the-window to open
 - [ ] Chromium only: stash `FileSystemFileHandle` in IndexedDB, offer a
       "Reopen «name».perfproj" button (permission needs a user gesture)
@@ -530,6 +567,38 @@ Legend: `[x]` done · `[ ]` not started · `[~]` partial
 - [~] Named nets: the Inspector names a net (it writes the name onto every wire
       in it, since a net has no stable identity). Still missing: showing the
       label on the canvas and optionally colouring the net's wires
+
+### Phase 9 — 3D view  ✅ COMPLETE
+- [x] `model/solid.ts` — every physical thickness, in mm: part height (default
+      5), board 1.6, wire 1, lead 0.64. `mmToHoles` is the ONLY conversion
+      into the hole-unit world
+- [x] `PartDef.height` (mm) + a Height field in the part editor; real heights
+      on every built-in
+- [x] `three/build.ts` — project → solid geometry. Boards as a substrate box
+      with repeating-texture copper on both faces; parts as `ExtrudeGeometry`
+      over the same `outlineUnion` rings the 2D body uses, extruding UP from
+      the top face or DOWN from the bottom one; lead stubs merged into one
+      mesh; wires as corner-rounded tubes
+- [x] Top-face artwork: the def's existing `PartGraphics` is rendered to a
+      hidden SVG, rasterised and mapped onto the extruded cap. `splitCaps`
+      separates ExtrudeGeometry's single lid group so the cap against the
+      board stays plain unless `PartDef.undersideArtwork` says otherwise
+- [x] Wire crossings: same-side wires that cross in plan are resolved so the
+      later-painted one arches over the other (`resolveCrossings`), with the
+      lift decided per crossing rather than per wire
+- [x] `three/Scene3D.tsx` — renderer, `RoomEnvironment` lighting, OrbitControls
+      (one finger orbits, two pan/zoom, so touch works for free)
+- [x] Picking: a click that did not orbit raycasts and sets the selection;
+      shift toggles, empty space clears. Selected objects get an emissive tint
+      plus an edge cage
+- [x] Camera: frames `contentBounds` against whichever fov is tighter,
+      remembers the viewpoint across a 2D/3D toggle, re-frames on `loadSeq`
+      and `fitSeq`, and swings under the board on Top/Bottom
+- [x] three.js lazy-loaded (`React.lazy`), so the 2D bundle is unchanged
+- [ ] Per-sub-shape heights (a header's tall shroud over its flat flange).
+      Offered and deferred — one height per def is the current model
+- [ ] Shadows. Left off deliberately: an unlit solder side reads worse than
+      a slightly flat one, and `RoomEnvironment` already grounds the parts
 
 ### Phase 8 — Polish
 - [x] Undo/redo UI + keyboard (toolbar buttons, Cmd/Ctrl+Z, shift for redo)
@@ -572,7 +641,10 @@ npm run preview   # serve the built dist/
 npm run lint      # oxlint (this scaffold uses oxlint, not ESLint)
 ```
 
-Dependencies already installed: `fflate`, `browser-fs-access`, `dompurify`.
+Dependencies already installed: `fflate`, `browser-fs-access`, `dompurify`,
+`polygon-clipping`, `three` (+ `@types/three`, dev). `three` is imported ONLY
+from `src/three/`, which `ui/App.tsx` reaches through `React.lazy` — keep it
+that way or it lands back in the main bundle.
 DOMPurify 3 ships its own types — do not add `@types/dompurify`.
 
 ---
@@ -626,11 +698,12 @@ DOMPurify 3 ships its own types — do not add `@types/dompurify`.
 - **There is no autosave and no IndexedDB session restore — removed
   deliberately, do not reintroduce it.** The app used to restore the last
   IndexedDB-saved session on launch and only fell back to
-  `public/tiny-cam.perfproj` on a browser's first-ever visit. That meant the
+  the default project on a browser's first-ever visit. That meant the
   live GitHub Pages demo pinned every returning visitor to a stale snapshot
   from their first visit forever, even after `tiny-cam.perfproj` was updated
   and redeployed — the concrete bug that got this removed. `App.tsx` now
-  always fetches `public/tiny-cam.perfproj` fresh on every launch (see Locked
+  always fetches the URL's project out of `public/projects/` fresh on every
+  launch (see Locked
   decisions, Session persistence); a user protects in-progress work with
   Save/Save as… and reopens the file later, same as any desktop app with no
   autosave. `io/autosave.ts` and the `idb` dependency are gone — if a texture
@@ -639,6 +712,17 @@ DOMPurify 3 ships its own types — do not add `@types/dompurify`.
   in-memory store as a normal side effect of loading a `.perfproj`, which is
   what makes both the default-project fetch and File → Open "just work" for
   textures with no separate persistence layer.
+- **A deep link only works on GitHub Pages because of `404.html`.** Pages is
+  static hosting with no SPA rewrite, so `/perfboarding/single-board` is a miss
+  and Pages answers a miss by serving `404.html` (with a 404 status, which the
+  browser renders anyway, leaving the typed path in `location.pathname` for
+  `urlProjectSlug` to read). The `pagesSpaFallback` plugin in `vite.config.ts`
+  copies the built `index.html` there on every build — delete it and every URL
+  but the bare base breaks *in production only*, since Vite's dev server and
+  `vite preview` both fall back to `index.html` on their own and will happily
+  show you a green deep link. `base: '/perfboarding/'` is load-bearing here
+  too: the copy is served from a deeper path, so its asset URLs must be
+  absolute.
 - **An SVG hit target must hit-test on its FILL.** A `stroke="transparent"`
   ring with `vector-effect="non-scaling-stroke"` renders but Chrome will not
   hit-test it, so a handle built that way silently does nothing and whatever is
@@ -786,7 +870,10 @@ DOMPurify 3 ships its own types — do not add `@types/dompurify`.
   headless-Chrome driver uses to assert what is actually on the canvas. Keep
   them on the outermost group of `PartView`/`WireView`.
 - **Tool/side keyboard shortcuts**: `V` select, `W` wire, `Q` top, `E` bottom
-  — bound in `Canvas.tsx`'s window keydown handler (same guard as the rest:
+  — bound in `Canvas.tsx`'s window keydown handler. `F` flips the side and
+  `3` toggles 2D/3D, bound in `App.tsx`'s handler instead, because that one
+  survives the canvas being unmounted in 3D. Both handlers now stand down
+  over an input and over `.modal-backdrop` (same guard as the rest:
   stands down over an input/textarea or the part-editor modal). The toolbar
   had `(V)`/`(W)` in its button titles for a while before these were actually
   wired up; if new tools are added, extend this block rather than adding a
@@ -831,6 +918,95 @@ DOMPurify 3 ships its own types — do not add `@types/dompurify`.
   omits it. A view-only app has no visible undo, so a thumb landing on Delete
   would be unanswerable. If you add a field to the Inspector, give it a mobile
   branch or it will be an edit control on a device that is not meant to edit.
+- **The 3D view's frame is `world.x = board.x`, `world.z = board.y`, `world.y
+  = UP`** — `three/build.ts` is the only place that is decided, and it is not
+  a second coordinate space: one hole is one world unit, and the sole thing
+  ever converted is a height out of `model/solid.ts`. The board plane is
+  y = 0, so the top face sits at `+BOARD_T/2` and the bottom at `-BOARD_T/2`.
+- **A bottom-side part is mirrored in the GEOMETRY, never with a negative mesh
+  scale.** `scale.x = -1` flips triangle winding and the lighting with it;
+  `partShapes(def, mirror)` negates the shape points instead, which is the
+  same mirror `partToBoard` applies. Its shape-space y flip is paired with the
+  mesh's `rotation.x` sign in `addPart` — change one and you must change the
+  other, or bottom parts land mirrored in z.
+- **Holes are never meshes in 3D either**, for exactly the reason they are
+  never DOM nodes in 2D. A board face is ONE plane per region filled with a
+  repeating tile from `three/textures.ts` — one tile is one hole, or one pad.
+  The tiles are opaque (they paint the substrate colour themselves), so the
+  board needs no transparency and no blend sorting anywhere.
+- **A part's top-face artwork is baked from the REAL `PartGraphics`.**
+  `Scene3D` renders a hidden `<svg>` per textured def and rasterises it
+  through an `<img>`; hand-writing a second artwork renderer would drift from
+  the 2D one the first time either changed. Two consequences: an SVG loaded
+  via `<img>` may not fetch ANY external resource, so textures must be
+  inlined as `data:` URIs (`io/assets.ts#assetDataUrl` — a `blob:` URL
+  silently renders nothing), and the bake is async, so it bumps `bakeSeq`
+  and the world rebuilds when it lands.
+- **Cap UVs are `repeat`/`offset` on a cloned texture, not a custom UV
+  generator.** `ExtrudeGeometry` already gives a cap the raw shape coordinates
+  as its UVs, so one repeat/offset pair maps the def's bounding box onto it.
+  The mirrored (bottom-side) case negates `repeat`, which is why each instance
+  gets its own clone rather than sharing the baked texture.
+- **ExtrudeGeometry emits one lid group and one side group PER SHAPE**, and
+  puts both lids of a shape in that single lid group. `splitCaps`
+  (`three/build.ts`) rewrites all of them so the outward cap can carry the
+  artwork while the walls and the cap against the board stay body colour.
+  Both halves of that sentence are traps. Within a lid group the z = 0 lid
+  comes first, so one scan for the first vertex at full depth splits it — if
+  three ever changes that order, this is the one place that notices. And a
+  part body is ONE SHAPE PER DISJOINT POLYGON of its outline, so a resistor
+  (capsule plus two leads that meet it at a tangent point) has six groups: the
+  first version took the first lid and the first side with `.find()` and then
+  called `clearGroups()`, which silently deleted every other polygon and
+  rendered the resistor as a single stray lead. Anything that rewrites groups
+  here must iterate `geom.groups`, never sample it.
+- **The underside artwork is MIRRORED, deliberately — do not "fix" it.**
+  Both caps take the same uv mapping from `capTexture`, and because you view
+  them from opposite directions the one against the board comes out reflected.
+  That is the physically honest answer: turning a part over mirrors it, which
+  is the rule `setPartSide` already follows for a part moved to the other face
+  of the board (see Locked decisions, Flipping a part's side). A `u -> 1 - u`
+  flip on the inward cap was tried — it makes the underside a readable COPY of
+  the top — and the user rejected it. `capTexture`'s `mirror` argument is a
+  different thing entirely: it is about which SIDE of the board the instance
+  is mounted on, and it must stay.
+- **Board copper is a DECAL and needs `polygonOffset`, not just a gap.** The
+  lattice/pad planes sit a hundredth of a millimetre off the substrate, which
+  no depth buffer can resolve — the board visibly shimmers as you orbit. The
+  copper material carries `polygonOffsetFactor: -2`, which is depth-space and
+  resolution-independent. The camera's near/far also matter: depth precision
+  is spent on the RATIO, so `applyFit` clamps both to the build
+  (`near = dist/2000`, `far = dist*12`) rather than leaving a far plane
+  kilometres past the work. Both halves are load-bearing; this was a real bug.
+- **Only an end over an actual BOARD plunges.** `plunges()` tests
+  `boardAt`, not the anchor kind, because a pin anchor says nothing about
+  whether there is anything underneath it: an off-board part (a panel switch,
+  a battery, a button on flying leads) has no hole to go into, and diving to
+  the board plane sent the wire curling down PAST the component instead of
+  into it. Stopping at ride height instead leaves the tube end inside the
+  part's own body, which is what "the wire goes into the button" looks like.
+- **A wire's plunge into a hole is a HARD corner, never rounded.** It is the
+  only exactly vertical segment a run has, which is how `isPlunge` finds it
+  without any index bookkeeping. Rounded, the terminal elbow hooks the wire
+  over the pin like a shepherd's crook instead of taking it into the hole.
+  Two things follow: `TubeGeometry` samples a curve by ARC LENGTH, so the
+  tube density (`len * 14`) has to be high enough to put samples either side
+  of a corner or it mitres visibly; and a corner that gets no arc must still
+  be emitted as a point on the path — `roundedPath`'s `sharp()` exists for
+  that. Simply skipping it cuts the corner off entirely, because the next
+  line starts from the NEXT corner's shoulder.
+- **A wire's hop height is decided PER CROSSING, not per wire.** At a
+  crossing the wire underneath is flat unless it happens to be hopping at that
+  same spot, so one step clears it; `hopLevelNear` is what catches the real
+  pile-up of three wires meeting within a wire's width. The first version
+  levelled each wire by its longest chain of crossings, and a bundle of
+  parallel runs crossing another bundle came out as a row of springs — if you
+  touch `resolveCrossings`, that is the failure mode to check for. Crossings
+  within `MERGE_DIST` become ONE arch over all of them, and a crossing within
+  `JUNCTION_EPS` of either polyline's vertex is a junction, not a crossing.
+- **`window.__perf3d` is dev-only**, and exists because nothing inside a WebGL
+  canvas is reachable from the DOM — it is to the 3D view what `data-part-id`
+  and `window.__perf` are to the 2D one. Do not reach for it from app code.
 - **Wire colour swatches in the toolbar are conditionally rendered**, not
   just hidden — `Toolbar.tsx` shows the swatch group when `tool === 'wire'`
   (picking the colour for the next wire you draw) **or** a wire is selected

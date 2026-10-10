@@ -159,6 +159,21 @@ export interface PartDef {
   artwork?: Artwork
   fill: string
   stroke: string
+  /**
+   * How tall the real component stands off the board, in MILLIMETRES.
+   * The only quantity in the document that is not in hole units, because it is
+   * what a datasheet quotes and what you measure with calipers — and nothing
+   * on the 2D board ever consumes it. Absent means `DEFAULT_PART_HEIGHT_MM`.
+   * Used solely by the 3D view (`model/solid.ts`).
+   */
+  height?: number
+  /**
+   * Repeat the artwork on the face AGAINST the board as well as the one
+   * pointing away from it. Off by default, because a real module carries its
+   * silkscreen on one face and bare laminate on the other — and a part
+   * overhanging a board edge shows that face. 3D only, like `height`.
+   */
+  undersideArtwork?: boolean
   builtin?: boolean
 }
 

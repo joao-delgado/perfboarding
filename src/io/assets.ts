@@ -54,6 +54,36 @@ export function assetUrlMap(assets: Record<string, AssetMeta>): Record<string, s
   return out
 }
 
+/**
+ * The same bytes as a `data:` URI.
+ *
+ * Needed by the 3D view, which bakes a part's 2D artwork into a texture by
+ * serialising its SVG and loading it through an `<img>`. An SVG loaded that
+ * way may not fetch ANY external resource — a `blob:` object URL included —
+ * so a texture image has to be inlined in the markup or it silently vanishes.
+ */
+export function assetDataUrl(id: string, mime: string): string {
+  const data = bytes.get(id)
+  if (!data) return ''
+  let bin = ''
+  // btoa over a 100KB string at once is fine; chunk anyway, since a texture
+  // can be megabytes and the argument list is what blows up.
+  const CHUNK = 0x8000
+  for (let i = 0; i < data.length; i += CHUNK) {
+    bin += String.fromCharCode(...data.subarray(i, i + CHUNK))
+  }
+  return `data:${mime};base64,${btoa(bin)}`
+}
+
+export function assetDataUrlMap(assets: Record<string, AssetMeta>): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const [id, meta] of Object.entries(assets)) {
+    const url = assetDataUrl(id, meta.mime)
+    if (url) out[id] = url
+  }
+  return out
+}
+
 export function clearAssets(): void {
   for (const url of urls.values()) URL.revokeObjectURL(url)
   urls.clear()

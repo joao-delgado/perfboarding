@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { fileOpen, fileSave, supported as fsSupported } from 'browser-fs-access'
-import { assetUrlMap } from '../io/assets'
+import { assetDataUrlMap, assetUrlMap } from '../io/assets'
 import { deserializeProject, PERFPROJ_MIME, projectBlob, suggestedFilename } from '../io/perfproj'
 import type { Project } from '../model/types'
 import { computeNets } from '../model/nets'
@@ -9,6 +9,15 @@ import { normalizeProject } from '../model/shapes'
 import { commit, getState, load, markClean, redo, set, undo, useEditor } from '../model/store'
 import { builtinMap } from '../parts/builtin'
 import { Canvas } from './Canvas'
+
+/**
+ * three.js is ~700KB of the bundle — more than the rest of the app put
+ * together — and most visits never leave the board plan. Loading it only when
+ * the 3D view is first opened keeps the 2D app as light as it was.
+ */
+const Scene3D = lazy(() =>
+  import('../three/Scene3D').then((m) => ({ default: m.Scene3D })),
+)
 import { PartEditor } from './PartEditor'
 import { PartsPanel } from './PartsPanel'
 import { ComponentsPanel } from './ComponentsPanel'
@@ -30,20 +39,54 @@ function migrate(p: Project): Project {
   return normalizeProject({ ...p, boards })
 }
 
+/** The project opened when the URL names none. */
+const DEFAULT_PROJECT = 'tiny-cam'
+
 /**
- * The demo project, loaded fresh on every launch. There is no autosaved
- * session to fall back to on purpose: a visitor who wants to keep work
- * across reloads saves a `.perfproj` and reopens it, rather than the app
- * silently pinning them to whatever this file looked like on their first visit.
+ * Which bundled project the URL asks for: the last path segment, so
+ * `/perfboarding/single-board` opens `public/projects/single-board.perfproj`
+ * and the bare `/perfboarding/` opens the default.
+ *
+ * The slug is restricted to a plain file-name alphabet on purpose — it is
+ * interpolated straight into a fetch path, and a `..` segment would walk out
+ * of `projects/` and let any URL on the origin be read as a document.
  */
-async function loadDefaultProject(): Promise<Project | undefined> {
+function urlProjectSlug(): string {
+  const base = import.meta.env.BASE_URL
+  let path = location.pathname
+  if (path.startsWith(base)) path = path.slice(base.length)
+  const slug = decodeURIComponent(path.replace(/^\/+|\/+$/g, ''))
+  if (!slug || slug === 'index.html') return DEFAULT_PROJECT
+  return /^[A-Za-z0-9_-]+$/.test(slug) ? slug : DEFAULT_PROJECT
+}
+
+async function fetchProject(slug: string): Promise<Project | undefined> {
   try {
-    const res = await fetch(`${import.meta.env.BASE_URL}tiny-cam.perfproj`)
+    const res = await fetch(`${import.meta.env.BASE_URL}projects/${slug}.perfproj`)
     if (!res.ok) return undefined
     const bytes = new Uint8Array(await res.arrayBuffer())
     return migrate(deserializeProject(bytes).project)
   } catch {
     return undefined
+  }
+}
+
+/**
+ * The bundled project for this URL, loaded fresh on every launch. There is no
+ * autosaved session to fall back to on purpose: a visitor who wants to keep
+ * work across reloads saves a `.perfproj` and reopens it, rather than the app
+ * silently pinning them to whatever this file looked like on their first visit.
+ *
+ * An unknown slug falls back to the default rather than opening an empty
+ * board, so a mistyped or stale link still lands on something to look at.
+ */
+async function loadUrlProject(): Promise<{ project?: Project; status: string }> {
+  const slug = urlProjectSlug()
+  const project = await fetchProject(slug)
+  if (project || slug === DEFAULT_PROJECT) return { project, status: '' }
+  return {
+    project: await fetchProject(DEFAULT_PROJECT),
+    status: `No project named "${slug}" — opened ${DEFAULT_PROJECT} instead.`,
   }
 }
 
@@ -58,13 +101,14 @@ export default function App() {
   const [editing, setEditing] = useState<{ defId?: string } | null>(null)
   const fileHandle = useRef<FileSystemFileHandle | null>(null)
 
-  // Always open the demo project fresh — see loadDefaultProject.
+  // Always open the URL's project fresh — see loadUrlProject.
   useEffect(() => {
     let cancelled = false
     void (async () => {
-      const seeded = await loadDefaultProject()
+      const { project, status: msg } = await loadUrlProject()
       if (cancelled) return
-      load(seeded ?? createProject('Untitled', builtinMap()), false)
+      load(project ?? createProject('Untitled', builtinMap()), false)
+      if (msg) setStatus(msg)
       setReady(true)
     })()
     return () => {
@@ -74,6 +118,12 @@ export default function App() {
 
   const netlist = useMemo(() => computeNets(s.project), [s.project])
   const assetUrls = useMemo(() => assetUrlMap(s.project.assets), [s.project.assets])
+  /** Only the 3D view needs these, and only to bake textures — see
+   *  `io/assets.ts#assetDataUrl` for why a blob URL will not do. */
+  const assetDataUrls = useMemo(
+    () => (s.mode === '3d' ? assetDataUrlMap(s.project.assets) : {}),
+    [s.project.assets, s.mode],
+  )
 
   /**
    * Write the project out. `reuseHandle` false always shows the picker, so
@@ -138,11 +188,16 @@ export default function App() {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement
       if (t && /input|textarea/i.test(t.tagName)) return
+      // Stand down under the part editor, the same way `Canvas.tsx` does —
+      // its modal does not unmount us, so a bare letter would otherwise
+      // switch the tool or the view behind it.
+      if (document.querySelector('.modal-backdrop')) return
       const mod = e.metaKey || e.ctrlKey
       if (!mod) {
         if (e.key === 'v') set({ tool: 'select' })
         if (e.key === 'w') set({ tool: 'wire' })
         if (e.key === 'f') set({ side: getState().side === 'top' ? 'bottom' : 'top' })
+        if (e.key === '3') set({ mode: getState().mode === '3d' ? '2d' : '3d' })
       }
       if (mod && e.key.toLowerCase() === 'z') {
         e.preventDefault()
@@ -182,7 +237,16 @@ export default function App() {
       />
       <div className="body">
         <div className="canvas-host">
-          <Canvas assetUrls={assetUrls} mobile={mobile} />
+          {/* The 2D canvas is unmounted in 3D rather than hidden: it holds a
+              window key handler and a camera-fit effect that have no business
+              running while you are orbiting. */}
+          {s.mode === '3d' ? (
+            <Suspense fallback={<div className="boot">Loading 3D…</div>}>
+              <Scene3D assetDataUrls={assetDataUrls} />
+            </Suspense>
+          ) : (
+            <Canvas assetUrls={assetUrls} mobile={mobile} />
+          )}
         </div>
         {mobile && panelOpen && (
           <div className="side-scrim" onClick={() => setPanelOpen(false)} />
@@ -229,9 +293,11 @@ export default function App() {
       {!mobile && (
       <div className="status">
         <span>
-          {s.tool === 'wire'
+          {s.mode === '3d'
+            ? 'Solid view: drag to orbit · right-drag to pan · scroll to zoom · click a part or wire to select it · Top/Bottom swings the camera'
+            : s.tool === 'wire'
             ? 'Wire: click or drag to start · click to add a bend · double-click or Enter to finish · double-click a bend to remove it · Shift constrains'
-            : 'Select: drag a part to move · drag empty board for a marquee · shift-click adds · drag a wire segment or its handles to reshape · ] / [ rotate'}
+              : 'Select: drag a part to move · drag empty board for a marquee · shift-click adds · drag a wire segment or its handles to reshape · ] / [ rotate'}
         </span>
         <span className="spacer" />
         <span>{netlist.nets.length} nets</span>

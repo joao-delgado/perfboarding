@@ -1,4 +1,5 @@
 import { makeOutlineEllipse, makeOutlineLine, makeOutlineRect, polygonShape } from '../model/shapes'
+import { DEFAULT_PART_HEIGHT_MM } from '../model/solid'
 import type { OutlineShape, PartDef, PinDef } from '../model/types'
 
 /**
@@ -41,6 +42,9 @@ function def(
   p: PinDef[],
   fill: string,
   stroke = '#2b2b2b',
+  /** Standing height in mm, for the 3D view. Real part dimensions, not the
+   *  5mm default — a field of identical slabs tells you nothing. */
+  height = DEFAULT_PART_HEIGHT_MM,
 ): PartDef {
   return {
     id,
@@ -50,6 +54,7 @@ function def(
     pins: p,
     fill,
     stroke,
+    height,
     builtin: true,
   }
 }
@@ -64,6 +69,7 @@ export function pinHeader(n: number): PartDef {
     Array.from({ length: n }, (_, i) => ({ id: `p${i + 1}`, name: String(i + 1), x: i, y: 0 })),
     '#1c1c1c',
     '#000000',
+    8.5,
   )
 }
 
@@ -75,6 +81,8 @@ export const BUILTIN_PARTS: PartDef[] = [
     [rect(1, -0.5, 3, 0.5), lead(0, 0, 1, 0), lead(3, 0, 4, 0)],
     pins(['1', 0, 0], ['2', 4, 0]),
     '#C8AA78',
+    undefined,
+    2.4,
   ),
   def(
     'cap-ceramic',
@@ -92,6 +100,8 @@ export const BUILTIN_PARTS: PartDef[] = [
     ],
     pins(['1', 0, 0], ['2', 2, 0]),
     '#D98F2B',
+    undefined,
+    4,
   ),
   def(
     'cap-electrolytic',
@@ -100,6 +110,8 @@ export const BUILTIN_PARTS: PartDef[] = [
     [circle(1, 0, 1.5)],
     pins(['+', 0, 0], ['-', 2, 0]),
     '#2C4C8C',
+    undefined,
+    11,
   ),
   def(
     'led-5mm',
@@ -108,6 +120,8 @@ export const BUILTIN_PARTS: PartDef[] = [
     [circle(0.5, 0, 1)],
     pins(['A', 0, 0], ['K', 1, 0]),
     '#E03030',
+    undefined,
+    8.6,
   ),
   def(
     'diode',
@@ -117,6 +131,7 @@ export const BUILTIN_PARTS: PartDef[] = [
     pins(['A', 0, 0], ['K', 4, 0]),
     '#37312C',
     '#c8c8c8',
+    2.7,
   ),
   def(
     'switch-tactile',
@@ -125,6 +140,8 @@ export const BUILTIN_PARTS: PartDef[] = [
     [rect(-0.5, -0.5, 2.5, 2.5)],
     pins(['1A', 0, 0], ['2A', 2, 0], ['1B', 0, 2], ['2B', 2, 2]),
     '#4A4A4A',
+    undefined,
+    5,
   ),
   def(
     'switch-slide',
@@ -133,6 +150,8 @@ export const BUILTIN_PARTS: PartDef[] = [
     [rect(-0.5, -1, 2.5, 1)],
     pins(['1', 0, 0], ['C', 1, 0], ['2', 2, 0]),
     '#B0B0B0',
+    undefined,
+    6,
   ),
   def(
     'screw-terminal-2',
@@ -141,6 +160,8 @@ export const BUILTIN_PARTS: PartDef[] = [
     [rect(-0.75, -1.25, 2.75, 1)],
     pins(['1', 0, 0], ['2', 2, 0]),
     '#2E7D32',
+    undefined,
+    10,
   ),
   pinHeader(4),
 ]

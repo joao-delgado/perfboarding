@@ -38,14 +38,31 @@ function MobileToolbar({ panelOpen, onTogglePanel }: Pick<Props, 'panelOpen' | '
         </button>
       </div>
 
-      <button
-        className={`btn icon ${s.showFarSide ? 'active' : ''}`}
-        aria-label="Ghost the far side of the board"
-        aria-pressed={s.showFarSide}
-        onClick={() => set({ showFarSide: !s.showFarSide })}
-      >
-        {s.showFarSide ? <EyeIcon size={15} /> : <EyeOffIcon size={15} />}
-      </button>
+      <div className="switch">
+        <button
+          className={`switch-btn view ${s.mode === '2d' ? 'active' : ''}`}
+          onClick={() => set({ mode: '2d' })}
+        >
+          2D
+        </button>
+        <button
+          className={`switch-btn view ${s.mode === '3d' ? 'active' : ''}`}
+          onClick={() => set({ mode: '3d' })}
+        >
+          3D
+        </button>
+      </div>
+
+      {s.mode === '2d' && (
+        <button
+          className={`btn icon ${s.showFarSide ? 'active' : ''}`}
+          aria-label="Ghost the far side of the board"
+          aria-pressed={s.showFarSide}
+          onClick={() => set({ showFarSide: !s.showFarSide })}
+        >
+          {s.showFarSide ? <EyeIcon size={15} /> : <EyeOffIcon size={15} />}
+        </button>
+      )}
 
       <button className="btn icon" aria-label="Fit the whole build on screen" onClick={requestFit}>
         <FitIcon size={15} />
@@ -92,23 +109,50 @@ export function Toolbar({ onSave, onSaveAs, onOpen, onNew, mobile, panelOpen, on
       <div className="group">
         <div className="switch">
           <button
-            className={`switch-btn select ${s.tool === 'select' ? 'active' : ''}`}
-            onClick={() => set({ tool: 'select' })}
-            title="Select and move (V)"
+            className={`switch-btn view ${s.mode === '2d' ? 'active' : ''}`}
+            onClick={() => set({ mode: '2d' })}
+            title="Board plan (3)"
           >
-            Select
+            2D
           </button>
           <button
-            className={`switch-btn wire ${s.tool === 'wire' ? 'active' : ''}`}
-            onClick={() => set({ tool: 'wire' })}
-            title="Draw wires (W)"
+            className={`switch-btn view ${s.mode === '3d' ? 'active' : ''}`}
+            onClick={() => set({ mode: '3d' })}
+            title="Solid view — both sides at once, orbit the camera (3)"
           >
-            Wire
+            3D
           </button>
         </div>
       </div>
 
       <div className="sep" />
+
+      {/* The tools draw on the board plan. 3D is view-and-select, so there is
+          nothing for them to do there — see `three/Scene3D.tsx`. */}
+      {s.mode === '2d' && (
+        <>
+          <div className="group">
+            <div className="switch">
+              <button
+                className={`switch-btn select ${s.tool === 'select' ? 'active' : ''}`}
+                onClick={() => set({ tool: 'select' })}
+                title="Select and move (V)"
+              >
+                Select
+              </button>
+              <button
+                className={`switch-btn wire ${s.tool === 'wire' ? 'active' : ''}`}
+                onClick={() => set({ tool: 'wire' })}
+                title="Draw wires (W)"
+              >
+                Wire
+              </button>
+            </div>
+          </div>
+
+          <div className="sep" />
+        </>
+      )}
 
       <div className="group">
         <button className="btn" onClick={undo} disabled={s.past.length === 0} title="Undo">
@@ -134,19 +178,27 @@ export function Toolbar({ onSave, onSaveAs, onOpen, onNew, mobile, panelOpen, on
           <button
             className={`switch-btn face ${s.side === 'bottom' ? 'active' : ''}`}
             onClick={() => set({ side: 'bottom' })}
-            title="Flip the board over — the view mirrors (E)"
+            title={
+              s.mode === '3d'
+                ? 'Swing the camera under the board'
+                : 'Flip the board over — the view mirrors (E)'
+            }
           >
             Bottom
           </button>
         </div>
-        <label className="check">
-          <input
-            type="checkbox"
-            checked={s.showFarSide}
-            onChange={(e) => set({ showFarSide: e.target.checked })}
-          />
-          ghost far side
-        </label>
+        {/* In 3D both faces are simply there, so there is no far side to
+            ghost — the checkbox would be a control that does nothing. */}
+        {s.mode === '2d' && (
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={s.showFarSide}
+              onChange={(e) => set({ showFarSide: e.target.checked })}
+            />
+            ghost far side
+          </label>
+        )}
       </div>
 
       {(s.tool === 'wire' || s.selection.wires.length > 0) && (
