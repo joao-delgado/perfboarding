@@ -577,15 +577,19 @@ Legend: `[x]` done · `[ ]` not started · `[~]` partial
 - [x] `three/build.ts` — project → solid geometry. Boards as a substrate box
       with repeating-texture copper on both faces; parts as `ExtrudeGeometry`
       over the same `outlineUnion` rings the 2D body uses, extruding UP from
-      the top face or DOWN from the bottom one; lead stubs merged into one
-      mesh; wires as corner-rounded tubes
+      the top face or DOWN from the bottom one; leads merged into one mesh,
+      drawn only for pins over a board (`boardAt`, the same test a wire end
+      uses to decide whether it plunges) — an off-board part has none, at the
+      user's request, since there is nothing for them to go into; wires as
+      corner-rounded tubes
 - [x] Top-face artwork: the def's existing `PartGraphics` is rendered to a
       hidden SVG, rasterised and mapped onto the extruded cap. `splitCaps`
       separates ExtrudeGeometry's single lid group so the cap against the
       board stays plain unless `PartDef.undersideArtwork` says otherwise
 - [x] Wire crossings: same-side wires that cross in plan are resolved so the
-      later-painted one arches over the other (`resolveCrossings`), with the
-      lift decided per crossing rather than per wire
+      later-painted one bridges over the other (`resolveCrossings`). Lift
+      comes from how high the wire below actually is there; width comes from
+      the crossing angle; nearby bridges merge into one flat span
 - [x] `three/Scene3D.tsx` — renderer, `RoomEnvironment` lighting, OrbitControls
       (one finger orbits, two pan/zoom, so touch works for free)
 - [x] Picking: a click that did not orbit raycasts and sets the selection;
@@ -995,15 +999,29 @@ DOMPurify 3 ships its own types — do not add `@types/dompurify`.
   be emitted as a point on the path — `roundedPath`'s `sharp()` exists for
   that. Simply skipping it cuts the corner off entirely, because the next
   line starts from the NEXT corner's shoulder.
-- **A wire's hop height is decided PER CROSSING, not per wire.** At a
-  crossing the wire underneath is flat unless it happens to be hopping at that
-  same spot, so one step clears it; `hopLevelNear` is what catches the real
-  pile-up of three wires meeting within a wire's width. The first version
-  levelled each wire by its longest chain of crossings, and a bundle of
-  parallel runs crossing another bundle came out as a row of springs — if you
-  touch `resolveCrossings`, that is the failure mode to check for. Crossings
-  within `MERGE_DIST` become ONE arch over all of them, and a crossing within
-  `JUNCTION_EPS` of either polyline's vertex is a junction, not a crossing.
+- **A wire crossing is a BRIDGE in arc length, not a hop on a segment.** Each
+  run carries `bridges` — a flat top `[s0, s1]` at some `lift`, with ramps at a
+  fixed 1/`RAMP` slope — measured as arc length along the flat polyline, so a
+  bridge runs straight through a bend or past the run's end (the wire then
+  arrives elevated and plunges, which is what a real jumper does). Three
+  earlier rules each let tubes pass through each other, and the gyro corner of
+  `single-board` hit all three: (1) a crossing near ANY polyline vertex was
+  treated as a junction, so a wire running exactly through another's bend
+  never lifted — only the run's two ENDS are junctions now, since a waypoint is
+  not electrical; (2) crossings were merged into one arch centred on the FIRST,
+  which a second crossing half a hole on fell outside of; (3) the arch was a
+  triangle sized for a square crossing, so its flanks cut into the wire below
+  on a diagonal. Now the lift is the wire below's real height across its whole
+  near band (`maxLift`) plus `HOP_STEP`, the flat top is solved per crossing
+  angle (`plateauHalf`), and bridges whose ramps come within `MIN_FLAT` merge
+  into one span. That merge is also what stops a run over a bundle of parallel
+  wires coming out as a row of springs — the original failure mode, still the
+  one to check for. Merging never costs clearance, because every ramp has the
+  same slope. To check any change here, sample every wire tube from
+  `__perf3d.world()` (TubeGeometry keeps its `parameters.path`) and look for
+  same-side pairs closer than one diameter away from their ends. The only ones
+  left are T-joins, where a wire ends in a hole another wire runs over, and
+  those are meant to touch.
 - **`window.__perf3d` is dev-only**, and exists because nothing inside a WebGL
   canvas is reachable from the DOM — it is to the 3D view what `data-part-id`
   and `window.__perf` are to the 2D one. Do not reach for it from app code.

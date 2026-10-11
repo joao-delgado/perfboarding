@@ -425,19 +425,14 @@ export function buildWorld(
       holder.add(m)
     }
 
-    // Leads. A pin over a board passes through it and pokes out the far side;
-    // one hanging off the edge of every board just gets a stub, because there
-    // is nothing for it to pass through.
+    // Leads. A pin over a board passes through it and pokes out the far side.
+    // A pin off every board draws nothing: a panel part or a module on flying
+    // leads is wired to, not soldered into anything, so a stub there was a
+    // lead hanging in mid-air under the body.
     for (const pos of partPinPositions(def, inst).values()) {
-      const through = !!boardAt(project, pos.x, pos.y)
+      if (!boardAt(project, pos.x, pos.y)) continue
       const from = bottom ? -HALF_T : HALF_T
-      const to = through
-        ? bottom
-          ? HALF_T + PIN_OUT
-          : -HALF_T - PIN_OUT
-        : bottom
-          ? -HALF_T + PIN_OUT
-          : HALF_T - PIN_OUT
+      const to = bottom ? HALF_T + PIN_OUT : -HALF_T - PIN_OUT
       const len = Math.abs(to - from)
       const leg = new THREE.CylinderGeometry(PIN_R, PIN_R, len, 8)
       leg.translate(pos.x, (from + to) / 2, pos.y)
@@ -474,7 +469,8 @@ export function buildWorld(
     const a = anchorPos(w.from, pinAt)
     const b = anchorPos(w.to, pinAt)
     if (!a || !b) return
-    runs.push({ w, order, flat: [a, ...w.waypoints, b], hops: [] })
+    const flat = [a, ...w.waypoints, b]
+    runs.push({ w, order, flat, cum: cumulative(flat), bridges: [] })
   })
   resolveCrossings(runs)
 
@@ -507,7 +503,7 @@ export function buildWorld(
     // off-board — has nothing to drop into and stays at height.
     const sign = w.side === 'bottom' ? -1 : 1
     const ride = sign * (HALF_T + WIRE_R)
-    const pts = hoppedPoints(flat, run.hops, ride, sign)
+    const pts = liftedPoints(run, ride, sign)
     if (plunges(w.from, a)) pts.unshift(new THREE.Vector3(a.x, 0, a.y))
     if (plunges(w.to, b)) pts.push(new THREE.Vector3(b.x, 0, b.y))
 
@@ -593,120 +589,226 @@ export function buildWorld(
   return { root, pickables, highlight, dispose }
 }
 
-/** How far a wire lifts to clear one layer under it. ~1.1 diameters. */
-const HOP_STEP = WIRE_R * 2.2
+/**
+ * How far a wire lifts to clear one wire under it, centreline to centreline.
+ * 1.4 diameters: a diameter to touch, plus enough air that the rounding at a
+ * bridge's shoulder (which cuts inside the corner) never eats into it.
+ */
+const HOP_STEP = WIRE_R * 2.8
 
 /**
- * Deepest stack of hops allowed. Only a genuine pile-up — three or more wires
- * crossing within a wire's width of the same spot — ever gets past 1, so this
- * is a backstop against a pathological sketch building a tower, not a budget.
+ * The closest two wire centrelines may come anywhere along a bridge — one
+ * diameter, plus room for the shoulder fillet and the tube's own faceting.
  */
-const MAX_HOP_LEVEL = 3
+const CLEARANCE = WIRE_R * 2.4
 
-/** A junction, not a crossing: this close to a vertex the wires are joined. */
+/** A bridge's ramp runs this far per unit of rise, so it climbs at ~37°. */
+const RAMP = 1.3
+
+/**
+ * Highest a wire will ever lift. Only a genuine pile-up — three or more wires
+ * crossing within a wire's width of the same spot — ever stacks, so this is a
+ * backstop against a pathological sketch building a tower, not a budget.
+ */
+const MAX_LIFT = HOP_STEP * 3
+
+/**
+ * Two bridges whose ramps come closer than this become one. Touching down for
+ * a few tenths of a hole between two crossings is what made a run over a
+ * bundle of parallel wires come out as a row of springs.
+ */
+const MIN_FLAT = 0.6
+
+/** A junction, not a crossing: this close to either wire's END they are joined. */
 const JUNCTION_EPS = 0.3
 
-/** Crossings closer together than this count as one hop. */
-const MERGE_DIST = WIRE_R * 2.5
+/**
+ * Floor on the sine of a crossing angle. The plateau a crossing needs grows as
+ * 1/sin, so a near-parallel pass would otherwise ask for an unbounded bridge.
+ */
+const MIN_SIN = 0.25
 
-/** One arch: where it sits on the run, and how many layers it must clear. */
-interface Hop {
-  /** Index of the flat segment it sits on. */
-  seg: number
-  /** Position along that segment, 0..1. */
-  t: number
-  /** Where it is in 2D, for matching against other wires' hops. */
-  p: Vec
-  level: number
+/**
+ * One raised stretch of a run: a flat top over [s0, s1] at `lift` above ride
+ * height, with ramps of `lift * RAMP` either side. Positions are ARC LENGTH
+ * along the flat polyline, so a bridge may run straight through a bend.
+ */
+interface Bridge {
+  s0: number
+  s1: number
+  lift: number
 }
 
 interface Run {
   w: Wire
   order: number
   flat: Vec[]
-  hops: Hop[]
+  /** Arc length at each vertex of `flat`. */
+  cum: number[]
+  bridges: Bridge[]
+}
+
+interface Crossing {
+  /** Arc length along the wire going over. */
+  s: number
+  /** Arc length along the wire underneath. */
+  su: number
+  /** Sine of the angle between the two, already floored at MIN_SIN. */
+  sin: number
+}
+
+function cumulative(flat: Vec[]): number[] {
+  const cum = [0]
+  for (let k = 1; k < flat.length; k++) {
+    cum.push(cum[k - 1] + Math.hypot(flat[k].x - flat[k - 1].x, flat[k].y - flat[k - 1].y))
+  }
+  return cum
 }
 
 /**
- * Where two segments cross, as the parameter along the first. Strictly
- * interior on both: a shared endpoint is a junction, not a crossing.
+ * Where two segments meet, as parameters along each, INCLUSIVE of their
+ * ends. A wire's bend lying exactly on another wire is still a crossing —
+ * waypoints are not electrical — so the ends cannot be excluded here; real
+ * junctions are filtered by the caller, which knows where each run ENDS.
  */
-function crossAt(a: Vec, b: Vec, c: Vec, d: Vec): number | null {
+function segmentHit(a: Vec, b: Vec, c: Vec, d: Vec): { t: number; u: number; sin: number } | null {
   const rx = b.x - a.x
   const ry = b.y - a.y
   const sx = d.x - c.x
   const sy = d.y - c.y
   const denom = rx * sy - ry * sx
-  if (Math.abs(denom) < 1e-9) return null
+  const lens = Math.hypot(rx, ry) * Math.hypot(sx, sy)
+  if (lens < 1e-12 || Math.abs(denom) < 1e-9 * lens) return null
   const qx = c.x - a.x
   const qy = c.y - a.y
   const t = (qx * sy - qy * sx) / denom
   const u = (qx * ry - qy * rx) / denom
-  if (t <= 0 || t >= 1 || u <= 0 || u >= 1) return null
-  return t
+  const E = 1e-9
+  if (t < -E || t > 1 + E || u < -E || u > 1 + E) return null
+  return { t, u, sin: Math.max(MIN_SIN, Math.abs(denom) / lens) }
+}
+
+/** Every place `r` crosses `o` in plan, away from either wire's ends. */
+function crossings(r: Run, o: Run): Crossing[] {
+  const ends = [r.flat[0], r.flat[r.flat.length - 1], o.flat[0], o.flat[o.flat.length - 1]]
+  const out: Crossing[] = []
+  for (let k = 0; k + 1 < r.flat.length; k++) {
+    for (let m = 0; m + 1 < o.flat.length; m++) {
+      const hit = segmentHit(r.flat[k], r.flat[k + 1], o.flat[m], o.flat[m + 1])
+      if (!hit) continue
+      const p = lerpVec(r.flat[k], r.flat[k + 1], hit.t)
+      if (ends.some((e) => Math.hypot(e.x - p.x, e.y - p.y) < JUNCTION_EPS)) continue
+      const s = r.cum[k] + hit.t * (r.cum[k + 1] - r.cum[k])
+      const su = o.cum[m] + hit.u * (o.cum[m + 1] - o.cum[m])
+      // A crossing AT a vertex is found once from each segment meeting there.
+      const dup = out.find((x) => Math.abs(x.s - s) < 1e-6 && Math.abs(x.su - su) < 1e-6)
+      if (dup) dup.sin = Math.min(dup.sin, hit.sin)
+      else out.push({ s, su, sin: hit.sin })
+    }
+  }
+  return out
+}
+
+/** How far above ride height `run` is at arc length `s`. */
+function liftAt(run: Run, s: number): number {
+  let lift = 0
+  for (const b of run.bridges) {
+    const off = s < b.s0 ? b.s0 - s : s > b.s1 ? s - b.s1 : 0
+    lift = Math.max(lift, b.lift - off / RAMP)
+  }
+  return lift
+}
+
+/** The highest `run` gets anywhere in [a, b]. Its profile is piecewise linear, so corners and ends suffice. */
+function maxLift(run: Run, a: number, b: number): number {
+  let lift = Math.max(liftAt(run, a), liftAt(run, b))
+  for (const br of run.bridges) {
+    for (const s of [br.s0, br.s1]) if (s > a && s < b) lift = Math.max(lift, liftAt(run, s))
+  }
+  return lift
 }
 
 /**
- * Decide which wire goes over which, and how high it has to lift.
+ * Half-width of the flat top a crossing needs, measured along the run going
+ * over. Off the top, the ramp falls away at 1/RAMP while the wire below gets
+ * farther away sideways at `sin` per unit of run — a square crossing is clear
+ * almost at once, a shallow one needs a long top. Solved numerically, because
+ * it runs a handful of times per wire and the closed form hides the geometry.
+ */
+function plateauHalf(lift: number, under: number, sin: number): number {
+  // Beyond this, the two tubes are side by side rather than stacked.
+  const reach = CLEARANCE / sin
+  const STEP = 0.01
+  for (let p = 0; p < reach; p += STEP) {
+    let clear = true
+    for (let d = p; d < reach; d += STEP) {
+      const side = d * sin
+      if (lift - (d - p) / RAMP < under + Math.sqrt(CLEARANCE ** 2 - side * side)) {
+        clear = false
+        break
+      }
+    }
+    if (clear) return p
+  }
+  return reach
+}
+
+/**
+ * Decide which wire goes over which, and how it gets there.
  *
  * Two wires drawn at the same height interpenetrate wherever they cross —
  * tubes passing through each other, which is both ugly and a lie about a
- * board you are going to build. Real jumpers hop over one another, so these
+ * board you are going to build. Real jumpers bridge one another, so these
  * do too.
  *
  * WHO goes over is `project.wires` order, which is already paint order in 2D
  * and already has a UI: the Inspector's Order group. "Bring to front" now
  * literally means "route this one over the others", in both views.
  *
- * The lift is decided PER CROSSING, not per wire. At a crossing the wire
- * underneath is flat unless it happens to be hopping at that same spot, so
- * one step clears it; only a real pile-up stacks higher. An earlier version
- * levelled each wire by its longest chain of crossings and a bundle of
- * parallel runs came out as a row of springs.
+ * HOW HIGH is decided per crossing, from how high the wire underneath
+ * actually is there — so one step clears a flat wire and only a real pile-up
+ * stacks. HOW WIDE comes from the crossing angle (`plateauHalf`). Bridges
+ * whose ramps would nearly meet are merged into one flat span, which is what
+ * a real jumper over a bundle of wires does.
  */
 function resolveCrossings(runs: Run[]): void {
-  // Paint order, so a wire's unders are always already resolved.
+  // Paint order, so every wire underneath already has its final profile.
   for (const r of runs) {
-    const raw: { seg: number; t: number; p: Vec; under: Run }[] = []
+    const need: Bridge[] = []
     for (const o of runs) {
       if (o.order >= r.order || o.w.side !== r.w.side) continue
-      for (let k = 0; k + 1 < r.flat.length; k++) {
-        for (let m = 0; m + 1 < o.flat.length; m++) {
-          const t = crossAt(r.flat[k], r.flat[k + 1], o.flat[m], o.flat[m + 1])
-          if (t === null) continue
-          const p = lerpVec(r.flat[k], r.flat[k + 1], t)
-          if (nearVertex(p, r.flat) || nearVertex(p, o.flat)) continue
-          raw.push({ seg: k, t, p, under: o })
-        }
+      for (const x of crossings(r, o)) {
+        // How high the wire below is anywhere it is close enough to touch.
+        const band = CLEARANCE / x.sin
+        const under = maxLift(o, x.su - band, x.su + band)
+        const lift = Math.min(MAX_LIFT, under + HOP_STEP)
+        const half = plateauHalf(lift, under, x.sin)
+        need.push({ s0: x.s - half, s1: x.s + half, lift })
       }
     }
+    r.bridges = mergeBridges(need)
+  }
+}
 
-    raw.sort((a, b) => a.seg - b.seg || a.t - b.t)
-    for (const x of raw) {
-      const last = r.hops[r.hops.length - 1]
-      // Crossing several wires in one spot is ONE arch over all of them.
-      const merge =
-        last &&
-        last.seg === x.seg &&
-        Math.hypot(last.p.x - x.p.x, last.p.y - x.p.y) < MERGE_DIST
-      const need = Math.min(MAX_HOP_LEVEL, hopLevelNear(x.under, x.p) + 1)
-      if (merge) last.level = Math.max(last.level, need)
-      else r.hops.push({ seg: x.seg, t: x.t, p: x.p, level: need })
+/**
+ * Overlapping (or nearly overlapping) bridges become one, at the higher lift.
+ * Every ramp falls at the same 1/RAMP, so the merged profile is everywhere at
+ * least as high as each of the bridges it replaced — merging never costs
+ * clearance.
+ */
+function mergeBridges(list: Bridge[]): Bridge[] {
+  list.sort((a, b) => a.s0 - b.s0)
+  const out: Bridge[] = []
+  for (const b of list) {
+    const last = out[out.length - 1]
+    if (last && b.s0 - b.lift * RAMP < last.s1 + last.lift * RAMP + MIN_FLAT) {
+      last.s1 = Math.max(last.s1, b.s1)
+      last.lift = Math.max(last.lift, b.lift)
+    } else {
+      out.push({ ...b })
     }
   }
-}
-
-/** How high `run` is already lifted at `p`, or 0 if it is flat there. */
-function hopLevelNear(run: Run, p: Vec): number {
-  let level = 0
-  for (const h of run.hops) {
-    if (Math.hypot(h.p.x - p.x, h.p.y - p.y) < MERGE_DIST) level = Math.max(level, h.level)
-  }
-  return level
-}
-
-function nearVertex(p: Vec, poly: Vec[]): boolean {
-  return poly.some((v) => Math.hypot(v.x - p.x, v.y - p.y) < JUNCTION_EPS)
+  return out
 }
 
 function lerpVec(a: Vec, b: Vec, t: number): Vec {
@@ -714,37 +816,32 @@ function lerpVec(a: Vec, b: Vec, t: number): Vec {
 }
 
 /**
- * The run's 3D points: flat at `ride`, arching at every crossing it owns.
- * The shoulders are placed so `roundedPath` turns each triplet into a smooth
- * bridge rather than a spike; where there is no room for one — two crossings
- * almost on top of each other — the hop is dropped rather than overshooting
- * into its neighbour.
+ * The run's 3D points: every vertex of the flat polyline, plus every corner of
+ * every bridge profile, each lifted to the profile's height there. A bridge
+ * corner landing within a whisker of a vertex is dropped in favour of the
+ * vertex, or `roundedPath` would be handed a near-zero segment and leave a
+ * hard kink where the wire should bend.
  */
-function hoppedPoints(flat: Vec[], hops: Hop[], ride: number, sign: number): THREE.Vector3[] {
-  const at = (p: Vec, y: number) => new THREE.Vector3(p.x, y, p.y)
-  const pts: THREE.Vector3[] = [at(flat[0], ride)]
+function liftedPoints(run: Run, ride: number, sign: number): THREE.Vector3[] {
+  const { flat, cum } = run
+  const total = cum[cum.length - 1]
+  const SNAP = 0.03
 
-  for (let k = 0; k + 1 < flat.length; k++) {
-    const a = flat[k]
-    const b = flat[k + 1]
-    const segLen = Math.hypot(b.x - a.x, b.y - a.y)
-    const here = hops.filter((h) => h.seg === k)
-
-    for (let q = 0; q < here.length; q++) {
-      const h = here[q]
-      const prev = q > 0 ? here[q - 1].t : 0
-      const next = q < here.length - 1 ? here[q + 1].t : 1
-      const rise = h.level * HOP_STEP
-      let shoulder = (rise * 1.5 + WIRE_R) / Math.max(segLen, 1e-6)
-      shoulder = Math.min(shoulder, (h.t - prev) * 0.45, (next - h.t) * 0.45)
-      if (shoulder * segLen < WIRE_R * 0.5) continue
-      pts.push(at(lerpVec(a, b, h.t - shoulder), ride))
-      pts.push(at(lerpVec(a, b, h.t), ride + sign * rise))
-      pts.push(at(lerpVec(a, b, h.t + shoulder), ride))
+  const marks: { s: number; p: Vec }[] = flat.map((p, k) => ({ s: cum[k], p }))
+  for (const b of run.bridges) {
+    const ramp = b.lift * RAMP
+    for (const s of [b.s0 - ramp, b.s0, b.s1, b.s1 + ramp]) {
+      if (s <= 0 || s >= total) continue
+      if (cum.some((c) => Math.abs(c - s) < SNAP)) continue
+      let k = 0
+      while (k < cum.length - 2 && cum[k + 1] < s) k++
+      const len = cum[k + 1] - cum[k]
+      marks.push({ s, p: lerpVec(flat[k], flat[k + 1], len > 0 ? (s - cum[k]) / len : 0) })
     }
-    pts.push(at(b, ride))
   }
-  return pts
+  // Stable, so a vertex keeps its place among the bridge corners at the same s.
+  marks.sort((a, b) => a.s - b.s)
+  return marks.map((m) => new THREE.Vector3(m.p.x, ride + sign * liftAt(run, m.s), m.p.y))
 }
 
 /**
